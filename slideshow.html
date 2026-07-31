@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file:; style-src 'unsafe-inline'; script-src 'self'" />
+  <title>Slideshow</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; cursor: none; }
+    body.show-cursor { cursor: default; }
+    #stage { position: fixed; inset: 0; }
+    .slide {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; overflow: hidden;
+    }
+    .slide.in { z-index: 2; }
+    .slide.out { z-index: 1; }
+    .slide img {
+      width: 100%; height: 100%;
+      object-fit: var(--scale-mode, contain);
+      user-select: none; -webkit-user-drag: none;
+    }
+
+    /* 效果類別套在各個 slide 上（而非舞台），
+       且 .in 與 .out 的 img 動畫宣告相同 → 舊圖淡出時動畫無縫延續，不會瞬間跳回。 */
+
+    /* 無效果：直接切換 */
+    .slide.effect-none.in { opacity: 1; }
+    .slide.effect-none.out { opacity: 0; }
+
+    /* 淡入淡出 */
+    .slide.effect-fade.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-fade.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+
+    /* 滑動 */
+    .slide.effect-slide.in { animation: slideIn var(--dur, 700ms) ease both; }
+    .slide.effect-slide.out { animation: slideOut var(--dur, 700ms) ease both; }
+
+    /* 縮放 */
+    .slide.effect-zoom.in { animation: zoomIn var(--dur, 700ms) ease both; }
+    .slide.effect-zoom.out { animation: fadeOut var(--dur, 700ms) ease both; }
+
+    /* 擦拭 */
+    .slide.effect-wipe.in { animation: wipeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-wipe.out { animation: holdThenHide var(--dur, 700ms) linear both; }
+
+    /* Ken Burns（緩慢縮放平移）*/
+    .slide.effect-kenburns.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-kenburns.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-kenburns.in img,
+    .slide.effect-kenburns.out img { animation: kenburns var(--kb-dur, 6s) linear both; }
+
+    /* 慢速拉遠（Ken Burns 反向）*/
+    .slide.effect-zoomout.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-zoomout.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-zoomout.in img,
+    .slide.effect-zoomout.out img { animation: zoomOutSlow var(--kb-dur, 6s) linear both; }
+
+    /* 慢速平移（畫面緩慢掃過）*/
+    .slide.effect-pan.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-pan.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-pan.in img,
+    .slide.effect-pan.out img { animation: panSlow var(--kb-dur, 6s) linear both; }
+
+    /* 漂移（縮放＋微旋轉，漂浮感）*/
+    .slide.effect-drift.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-drift.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-drift.in img,
+    .slide.effect-drift.out img { animation: driftSlow var(--kb-dur, 6s) linear both; }
+
+    /* 交錯縮放（上一張放大淡出、下一張縮小淡入）*/
+    .slide.effect-crosszoom.in { animation: czIn var(--dur, 700ms) ease-out both; }
+    .slide.effect-crosszoom.out { animation: czOut var(--dur, 700ms) ease-in both; }
+    .slide.effect-crosszoom.in img,
+    .slide.effect-crosszoom.out img { animation: kenburns var(--kb-dur, 6s) linear both; }
+
+    /* 對焦（模糊慢慢變清晰）*/
+    .slide.effect-focus.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-focus.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-focus.in img,
+    .slide.effect-focus.out img { animation: focusIn calc(var(--dur, 700ms) * 3) ease-out both; }
+
+    @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes holdThenHide { 0% { opacity: 1; } 99% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes slideIn  { from { transform: translateX(100%); opacity: 1; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(-100%); opacity: 1; } }
+    /* 各效果的幅度都乘上 --i（動態幅度倍率，由設定頁傳入，預設 2）。
+       數字越大 → 縮放／平移／旋轉的移動越明顯。 */
+    @keyframes zoomIn   { from { transform: scale(calc(1 + 0.10 * var(--i, 2))); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes wipeIn   { from { clip-path: inset(0 100% 0 0); opacity: 1; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
+    @keyframes kenburns { from { transform: scale(1); } to { transform: scale(calc(1 + 0.09 * var(--i, 2))); } }
+    @keyframes zoomOutSlow { from { transform: scale(calc(1 + 0.10 * var(--i, 2))); } to { transform: scale(1); } }
+    @keyframes panSlow {
+      from { transform: scale(calc(1 + 0.11 * var(--i, 2))) translate(var(--pf, -2.5%, 0)); }
+      to   { transform: scale(calc(1 + 0.11 * var(--i, 2))) translate(var(--pt, 2.5%, 0)); }
+    }
+    @keyframes driftSlow {
+      from { transform: scale(calc(1 + 0.03 * var(--i, 2))) rotate(0deg); }
+      to   { transform: scale(calc(1 + 0.08 * var(--i, 2))) rotate(calc(0.8deg * var(--i, 2))); }
+    }
+    @keyframes czIn  { from { transform: scale(calc(1 - 0.07 * var(--i, 2))); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes czOut { from { transform: scale(1); opacity: 1; } to { transform: scale(calc(1 + 0.10 * var(--i, 2))); opacity: 0; } }
+    @keyframes focusIn {
+      from { filter: blur(calc(7px * var(--i, 2))); transform: scale(calc(1 + 0.03 * var(--i, 2))); }
+      to   { filter: blur(0);    transform: scale(1); }
+    }
+
+    /* 圖片資訊面板（移動滑鼠時顯示）*/
+    #info {
+      position: fixed; left: 24px; bottom: 24px; max-width: 70vw; z-index: 10;
+      background: rgba(0,0,0,0.65); color: #eee;
+      font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+      padding: 12px 16px; border-radius: 10px;
+      opacity: 0; transition: opacity 0.25s; pointer-events: none;
+      backdrop-filter: blur(4px);
+    }
+    #info.visible { opacity: 1; }
+    #info .name { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    #info .path { font-size: 12px; color: #b8b8c0; word-break: break-all; }
+    #info .meta { font-size: 12px; color: #8fb8e8; margin-top: 4px; }
+
+    #hint {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.75); font-family: "Microsoft JhengHei", sans-serif;
+      font-size: 14px; background: rgba(0,0,0,0.5); padding: 8px 16px;
+      border-radius: 20px; transition: opacity 0.6s; pointer-events: none; z-index: 11;
+    }
+    #hint.hidden { opacity: 0; }
+    #msg {
+      position: fixed; inset: 0; display: flex; align-items: center;
+      justify-content: center; color: #888; font-family: sans-serif; font-size: 18px; z-index: 12;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div class="slide" id="slideA"><img id="imgA" /></div>
+    <div class="slide" id="slideB"><img id="imgB" /></div>
+  </div>
+  <div id="info">
+    <div class="name" id="info-name"></div>
+    <div class="path" id="info-path"></div>
+    <div class="meta" id="info-meta"></div>
+  </div>
+  <div id="hint" data-i18n="hint.slideshow">點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片資訊</div>
+  <div id="msg" style="display:none"></div>
+  <script src="i18n.js"></script>
+  <script src="slideshow.js"></script>
+</body>
+</html>

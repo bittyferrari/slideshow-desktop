@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self'" />
+  <title>Slideshow 設定</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
+      background: #1e1e24;
+      color: #e8e8ec;
+      padding: 24px;
+    }
+    h1 { font-size: 20px; margin: 0 0 20px; font-weight: 600; }
+    .field { margin-bottom: 18px; }
+    label { display: block; font-size: 13px; margin-bottom: 6px; color: #b8b8c0; }
+    .dir-row { display: flex; gap: 8px; }
+    input[type="text"], input[type="number"] {
+      width: 100%; padding: 9px 11px; border-radius: 8px;
+      border: 1px solid #3a3a44; background: #2a2a32; color: #e8e8ec;
+      font-size: 14px;
+    }
+    input[readonly] { color: #9a9aa4; }
+    select {
+      width: 100%; padding: 9px 11px; border-radius: 8px;
+      border: 1px solid #3a3a44; background: #2a2a32; color: #e8e8ec;
+      font-size: 14px;
+    }
+    button {
+      border: none; border-radius: 8px; cursor: pointer;
+      font-size: 14px; padding: 9px 16px; font-weight: 500;
+    }
+    .btn-secondary { background: #3a3a44; color: #e8e8ec; white-space: nowrap; }
+    .btn-secondary:hover { background: #45454f; }
+    .btn-primary {
+      background: #5b7cfa; color: #fff; width: 100%;
+      padding: 13px; font-size: 15px; margin-top: 8px;
+    }
+    .btn-primary:hover { background: #6d8bff; }
+    .btn-primary:disabled { background: #3a3a44; color: #777; cursor: not-allowed; }
+    .checks { display: flex; flex-direction: column; gap: 10px; }
+    .check-row { display: flex; align-items: center; gap: 9px; }
+    .check-row input { width: 17px; height: 17px; accent-color: #5b7cfa; }
+    .check-row label { margin: 0; font-size: 14px; color: #e8e8ec; }
+    .hint { font-size: 12px; color: #7a7a84; margin-top: 6px; }
+    .count { font-size: 12px; color: #6ec26e; margin-top: 6px; min-height: 16px; }
+    .inline { display: flex; align-items: center; gap: 8px; }
+    .inline input[type="number"] { width: 90px; }
+    .inline span { font-size: 13px; color: #b8b8c0; }
+  </style>
+</head>
+<body data-i18n-title="window.settings">
+  <h1 data-i18n="app.title">🖼️ Slideshow 設定</h1>
+
+  <div class="field">
+    <label data-i18n="field.language">語言</label>
+    <select id="lang"></select>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.dir">圖片目錄</label>
+    <div class="dir-row">
+      <input type="text" id="dir" readonly data-i18n-placeholder="placeholder.dir" placeholder="尚未選擇目錄…" />
+      <button class="btn-secondary" id="pick" data-i18n="btn.pick">選擇…</button>
+    </div>
+    <div class="count" id="count"></div>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.interval">切換間隔</label>
+    <div class="inline">
+      <input type="number" id="interval" min="0.5" step="0.5" value="4" />
+      <span data-i18n="unit.seconds">秒</span>
+    </div>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.intensity">動態幅度</label>
+    <div class="inline">
+      <input type="number" id="intensity" min="0.1" max="100" step="0.5" value="2" />
+      <span data-i18n="unit.times">倍</span>
+    </div>
+    <div class="hint" data-i18n="hint.intensity">數字越大，縮放／平移／旋轉的移動越明顯（建議 1–4）。</div>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.scaleMode">縮放模式</label>
+    <select id="scaleMode">
+      <option value="contain" selected data-i18n="scale.contain">符合畫面（Fit）</option>
+      <option value="cover" data-i18n="scale.cover">填滿畫面（裁切）</option>
+      <option value="fill" data-i18n="scale.fill">拉伸填滿</option>
+      <option value="none" data-i18n="scale.none">原始大小（置中）</option>
+      <option value="scale-down" data-i18n="scale.scale-down">縮小至符合（不放大）</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.effect">切換效果</label>
+    <select id="effect">
+      <option value="fade" selected data-i18n="effect.fade">淡入淡出</option>
+      <option value="slide" data-i18n="effect.slide">滑動</option>
+      <option value="zoom" data-i18n="effect.zoom">縮放</option>
+      <option value="wipe" data-i18n="effect.wipe">擦拭</option>
+      <option value="kenburns" data-i18n="effect.kenburns">Ken Burns（緩慢縮放平移）</option>
+      <option value="zoomout" data-i18n="effect.zoomout">慢速拉遠</option>
+      <option value="pan" data-i18n="effect.pan">慢速平移</option>
+      <option value="drift" data-i18n="effect.drift">漂移（縮放＋微旋轉）</option>
+      <option value="crosszoom" data-i18n="effect.crosszoom">交錯縮放</option>
+      <option value="focus" data-i18n="effect.focus">對焦（模糊變清晰）</option>
+      <option value="random" data-i18n="effect.random">隨機</option>
+      <option value="none" data-i18n="effect.none">無</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.options">選項</label>
+    <div class="checks">
+      <div class="check-row">
+        <input type="checkbox" id="recursive" />
+        <label for="recursive" data-i18n="opt.recursive">包含子目錄</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="shuffle" checked />
+        <label for="shuffle" data-i18n="opt.shuffle">隨機順序</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="loop" checked />
+        <label for="loop" data-i18n="opt.loop">循環播放</label>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn-primary" id="start" disabled data-i18n="btn.start">▶ 開始播放</button>
+  <div class="hint" data-i18n="hint.settings">播放時：點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片路徑與資訊。</div>
+
+  <script src="i18n.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

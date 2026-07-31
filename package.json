@@ -1,0 +1,30 @@
+{
+  "name": "slideshow-app",
+  "version": "1.0.0",
+  "description": "簡易圖片 Slideshow 桌面程式（Electron）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.slideshow.app",
+    "productName": "Slideshow",
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "Slideshow.exe"
+    },
+    "files": [
+      "**/*",
+      "!dist/**"
+    ]
+  }
+}
