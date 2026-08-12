@@ -144,9 +144,13 @@ function formatSize(n) {
 
 async function updateInfo() {
   if (!current) return;
-  const name = current.path.split(/[\\/]/).pop();
+  const parts = current.path.split(/[\\/]/).filter(Boolean);
+  const name = parts[parts.length - 1];
   el('info-name').textContent = name;
-  el('info-path').textContent = current.path;
+  // 只顯示 上層資料夾\檔名（若無上層則只顯示檔名）
+  el('info-path').textContent = parts.length > 1
+    ? parts[parts.length - 2] + '\\' + name
+    : name;
 
   let meta = `${current.index} / ${images.length}`;
   const visible = showingA ? el('slideA') : el('slideB');
