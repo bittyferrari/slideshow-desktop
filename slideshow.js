@@ -230,24 +230,23 @@ const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
 
 // 把設定攤平成圖牆用的參數（未設定時給預設值）
 function wallSettings() {
-  const base = cfg.intervalMs || 4000;
   return {
-    cols: num(cfg.wallCols, 0),                       // 0 = 自動
+    cols: num(cfg.wallCols, 6),                       // 0 = 自動
     gap: num(cfg.wallGap, 10),                        // px
-    radius: num(cfg.wallRadius, 10),                  // px
-    rows: num(cfg.wallRows, 6),                       // 每欄大約幾張（張數上限用）
+    radius: num(cfg.wallRadius, 20),                  // px
+    rows: num(cfg.wallRows, 8),                       // 每欄大約幾張（張數上限用）
     staggerMs: num(cfg.wallStaggerMs, 60),            // 逐張顯示的間隔
-    holdMs: num(cfg.wallHoldMs, base),                // 圖牆停留
-    dim: num(cfg.wallDim, 28) / 100,                  // 變暗後亮度
-    dimMs: num(cfg.wallDimMs, 900),                   // 變暗過程
-    spotMs: num(cfg.wallSpotMs, 1600),                // 慢慢提高亮度
-    flyMs: num(cfg.wallFlyMs, 900),                   // 放大／收回
-    bigMs: num(cfg.wallBigMs, Math.round(base * 1.5)),// 大圖停留
-    bigScale: num(cfg.wallBigScale, 86) / 100,        // 大圖占畫面比例
-    spots: Math.max(1, num(cfg.wallSpots, 1)),        // 一輪聚焦幾張
-    replacePct: num(cfg.wallReplacePct, 60),          // 一輪換掉幾 % 的圖
+    holdMs: num(cfg.wallHoldMs, 1000),                // 圖牆停留
+    dim: num(cfg.wallDim, 40) / 100,                  // 變暗後亮度
+    dimMs: num(cfg.wallDimMs, 500),                   // 變暗過程
+    spotMs: num(cfg.wallSpotMs, 800),                // 慢慢提高亮度
+    flyMs: num(cfg.wallFlyMs, 1000),                   // 放大／收回
+    bigMs: num(cfg.wallBigMs, 3000),// 大圖停留
+    bigScale: num(cfg.wallBigScale, 100) / 100,        // 大圖占畫面比例
+    spots: Math.max(1, num(cfg.wallSpots, 2)),        // 一輪聚焦幾張
+    replacePct: num(cfg.wallReplacePct, 80),          // 一輪換掉幾 % 的圖
     swap: cfg.wallSwapMode || 'push',                 // 換圖方式 fade / push
-    pushMs: num(cfg.wallPushMs, 700),                 // 往上推的動畫時間
+    pushMs: num(cfg.wallPushMs, 4000),                 // 往上推的動畫時間
   };
 }
 

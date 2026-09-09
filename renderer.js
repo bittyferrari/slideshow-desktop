@@ -72,21 +72,21 @@ async function restoreSettings() {
 // ---- Pinterest 圖牆設定 ----
 // [設定鍵, 輸入框 id, 預設值, 存檔時的換算(倍率)]  倍率 1000 = 秒轉毫秒
 const WALL_FIELDS = [
-  ['wallCols', 'wallCols', 0, 1],
-  ['wallRows', 'wallRows', 6, 1],
-  ['wallPushMs', 'wallPush', 700, 1000],
+  ['wallCols', 'wallCols', 6, 1],
+  ['wallRows', 'wallRows', 8, 1],
+  ['wallPushMs', 'wallPush', 4000, 1000],
   ['wallStaggerMs', 'wallStagger', 60, 1],
   ['wallGap', 'wallGap', 10, 1],
-  ['wallRadius', 'wallRadius', 10, 1],
-  ['wallHoldMs', 'wallHold', 4000, 1000],
-  ['wallDim', 'wallDim', 28, 1],
-  ['wallDimMs', 'wallDimMs', 900, 1000],
-  ['wallSpotMs', 'wallSpot', 1600, 1000],
-  ['wallFlyMs', 'wallFly', 900, 1000],
-  ['wallBigMs', 'wallBig', 6000, 1000],
-  ['wallBigScale', 'wallBigScale', 86, 1],
-  ['wallSpots', 'wallSpots', 1, 1],
-  ['wallReplacePct', 'wallReplacePct', 60, 1],
+  ['wallRadius', 'wallRadius', 20, 1],
+  ['wallHoldMs', 'wallHold', 1000, 1000],
+  ['wallDim', 'wallDim', 40, 1],
+  ['wallDimMs', 'wallDimMs', 500, 1000],
+  ['wallSpotMs', 'wallSpot', 800, 1000],
+  ['wallFlyMs', 'wallFly', 1000, 1000],
+  ['wallBigMs', 'wallBig', 3000, 1000],
+  ['wallBigScale', 'wallBigScale', 100, 1],
+  ['wallSpots', 'wallSpots', 2, 1],
+  ['wallReplacePct', 'wallReplacePct', 80, 1],
 ];
 
 // 只有選「Pinterest 圖牆」時才顯示細部設定
