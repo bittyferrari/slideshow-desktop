@@ -133,6 +133,8 @@
     }
     .tile.shown { opacity: 1; transform: translateY(0) scale(1); }
     .tile img { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
+    /* 高度量好鎖定後，圖片以 cover 填滿磚塊 → 換圖時版面完全不重排 */
+    .tile.locked img { height: 100%; object-fit: cover; }
 
     /* 畫面變暗：所有圖降低亮度 */
     #wall.dimmed .tile.shown {

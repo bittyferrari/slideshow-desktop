@@ -73,6 +73,7 @@ async function restoreSettings() {
 const WALL_FIELDS = [
   ['wallCols', 'wallCols', 0, 1],
   ['wallRows', 'wallRows', 6, 1],
+  ['wallStaggerMs', 'wallStagger', 60, 1],
   ['wallGap', 'wallGap', 10, 1],
   ['wallRadius', 'wallRadius', 10, 1],
   ['wallHoldMs', 'wallHold', 4000, 1000],
