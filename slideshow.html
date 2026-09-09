@@ -23,88 +23,94 @@
     }
 
     /* 效果類別套在各個 slide 上（而非舞台），
-       且 .in 與 .out 的 img 動畫宣告相同 → 舊圖淡出時動畫無縫延續，不會瞬間跳回。 */
+       且 .in 與 .out 的 img 動畫宣告相同 → 舊圖淡出時動畫無縫延續，不會瞬間跳回。
+
+       所有數值都走 CSS 變數，由 slideshow.js 依「該效果自己的設定」逐張寫進 inline style：
+         slide 元素：--dur（進出場時間）、--ease、--sf/--st（滑動）、--wipe（擦拭）、
+                     --zin（縮放進場）、--czi/--czo（交錯縮放）
+         img  元素：--kb-dur（慢動作時間）、--z0/--z1（起訖縮放）、--pf/--pt（平移）、
+                     --rot（旋轉）、--blur/--fdur（對焦）
+       img 的變數寫在 img 上（不是 slide 上），所以切換時更新 slide 的變數
+       不會干擾舊圖正在跑的慢動作。 */
 
     /* 無效果：直接切換 */
     .slide.effect-none.in { opacity: 1; }
     .slide.effect-none.out { opacity: 0; }
 
     /* 淡入淡出 */
-    .slide.effect-fade.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
-    .slide.effect-fade.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-fade.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-fade.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
 
     /* 滑動 */
-    .slide.effect-slide.in { animation: slideIn var(--dur, 700ms) ease both; }
-    .slide.effect-slide.out { animation: slideOut var(--dur, 700ms) ease both; }
+    .slide.effect-slide.in { animation: slideIn var(--dur, 700ms) var(--ease, ease) both; }
+    .slide.effect-slide.out { animation: slideOut var(--dur, 700ms) var(--ease, ease) both; }
 
     /* 縮放 */
-    .slide.effect-zoom.in { animation: zoomIn var(--dur, 700ms) ease both; }
-    .slide.effect-zoom.out { animation: fadeOut var(--dur, 700ms) ease both; }
+    .slide.effect-zoom.in { animation: zoomIn var(--dur, 700ms) var(--ease, ease) both; }
+    .slide.effect-zoom.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease) both; }
 
     /* 擦拭 */
-    .slide.effect-wipe.in { animation: wipeIn var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-wipe.in { animation: wipeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
     .slide.effect-wipe.out { animation: holdThenHide var(--dur, 700ms) linear both; }
 
     /* Ken Burns（緩慢縮放平移）*/
-    .slide.effect-kenburns.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
-    .slide.effect-kenburns.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-kenburns.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-kenburns.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
     .slide.effect-kenburns.in img,
-    .slide.effect-kenburns.out img { animation: kenburns var(--kb-dur, 6s) linear both; }
+    .slide.effect-kenburns.out img { animation: kbSlow var(--kb-dur, 6s) linear both; }
 
     /* 慢速拉遠（Ken Burns 反向）*/
-    .slide.effect-zoomout.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
-    .slide.effect-zoomout.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-zoomout.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-zoomout.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
     .slide.effect-zoomout.in img,
-    .slide.effect-zoomout.out img { animation: zoomOutSlow var(--kb-dur, 6s) linear both; }
+    .slide.effect-zoomout.out img { animation: kbSlow var(--kb-dur, 6s) linear both; }
 
     /* 慢速平移（畫面緩慢掃過）*/
-    .slide.effect-pan.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
-    .slide.effect-pan.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-pan.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-pan.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
     .slide.effect-pan.in img,
     .slide.effect-pan.out img { animation: panSlow var(--kb-dur, 6s) linear both; }
 
     /* 漂移（縮放＋微旋轉，漂浮感）*/
-    .slide.effect-drift.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
-    .slide.effect-drift.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-drift.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-drift.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
     .slide.effect-drift.in img,
     .slide.effect-drift.out img { animation: driftSlow var(--kb-dur, 6s) linear both; }
 
     /* 交錯縮放（上一張放大淡出、下一張縮小淡入）*/
-    .slide.effect-crosszoom.in { animation: czIn var(--dur, 700ms) ease-out both; }
-    .slide.effect-crosszoom.out { animation: czOut var(--dur, 700ms) ease-in both; }
+    .slide.effect-crosszoom.in { animation: czIn var(--dur, 700ms) var(--ease, ease-out) both; }
+    .slide.effect-crosszoom.out { animation: czOut var(--dur, 700ms) var(--ease, ease-in) both; }
     .slide.effect-crosszoom.in img,
-    .slide.effect-crosszoom.out img { animation: kenburns var(--kb-dur, 6s) linear both; }
+    .slide.effect-crosszoom.out img { animation: kbSlow var(--kb-dur, 6s) linear both; }
 
     /* 對焦（模糊慢慢變清晰）*/
-    .slide.effect-focus.in { animation: fadeIn var(--dur, 700ms) ease-in-out both; }
-    .slide.effect-focus.out { animation: fadeOut var(--dur, 700ms) ease-in-out both; }
+    .slide.effect-focus.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-focus.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
     .slide.effect-focus.in img,
-    .slide.effect-focus.out img { animation: focusIn calc(var(--dur, 700ms) * 3) ease-out both; }
+    .slide.effect-focus.out img { animation: focusIn var(--fdur, 2100ms) ease-out both; }
 
     @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
     @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
     @keyframes holdThenHide { 0% { opacity: 1; } 99% { opacity: 1; } 100% { opacity: 0; } }
-    @keyframes slideIn  { from { transform: translateX(100%); opacity: 1; } to { transform: translateX(0); opacity: 1; } }
-    @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(-100%); opacity: 1; } }
-    /* 各效果的幅度都乘上 --i（動態幅度倍率，由設定頁傳入，預設 2）。
-       數字越大 → 縮放／平移／旋轉的移動越明顯。 */
-    @keyframes zoomIn   { from { transform: scale(calc(1 + 0.10 * var(--i, 2))); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-    @keyframes wipeIn   { from { clip-path: inset(0 100% 0 0); opacity: 1; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
-    @keyframes kenburns { from { transform: scale(1); } to { transform: scale(calc(1 + 0.09 * var(--i, 2))); } }
-    @keyframes zoomOutSlow { from { transform: scale(calc(1 + 0.10 * var(--i, 2))); } to { transform: scale(1); } }
+    @keyframes slideIn  { from { transform: translate(var(--sf, 100%, 0)); opacity: 1; } to { transform: translate(0px, 0px); opacity: 1; } }
+    @keyframes slideOut { from { transform: translate(0px, 0px); opacity: 1; } to { transform: translate(var(--st, -100%, 0)); opacity: 1; } }
+    @keyframes zoomIn   { from { transform: scale(var(--zin, 1.2)); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes wipeIn   { from { clip-path: inset(var(--wipe, 0 100% 0 0)); opacity: 1; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
+    /* Ken Burns / 慢速拉遠 / 交錯縮放共用：由 --z0 → --z1 */
+    @keyframes kbSlow { from { transform: scale(var(--z0, 1)); } to { transform: scale(var(--z1, 1.18)); } }
     @keyframes panSlow {
-      from { transform: scale(calc(1 + 0.11 * var(--i, 2))) translate(var(--pf, -2.5%, 0)); }
-      to   { transform: scale(calc(1 + 0.11 * var(--i, 2))) translate(var(--pt, 2.5%, 0)); }
+      from { transform: scale(var(--z0, 1.22)) translate(var(--pf, -5%, 0)); }
+      to   { transform: scale(var(--z0, 1.22)) translate(var(--pt, 5%, 0)); }
     }
     @keyframes driftSlow {
-      from { transform: scale(calc(1 + 0.03 * var(--i, 2))) rotate(0deg); }
-      to   { transform: scale(calc(1 + 0.08 * var(--i, 2))) rotate(calc(0.8deg * var(--i, 2))); }
+      from { transform: scale(var(--z0, 1.06)) rotate(0deg); }
+      to   { transform: scale(var(--z1, 1.16)) rotate(var(--rot, 1.6deg)); }
     }
-    @keyframes czIn  { from { transform: scale(calc(1 - 0.07 * var(--i, 2))); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-    @keyframes czOut { from { transform: scale(1); opacity: 1; } to { transform: scale(calc(1 + 0.10 * var(--i, 2))); opacity: 0; } }
+    @keyframes czIn  { from { transform: scale(var(--czi, 0.86)); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes czOut { from { transform: scale(1); opacity: 1; } to { transform: scale(var(--czo, 1.2)); opacity: 0; } }
     @keyframes focusIn {
-      from { filter: blur(calc(7px * var(--i, 2))); transform: scale(calc(1 + 0.03 * var(--i, 2))); }
-      to   { filter: blur(0);    transform: scale(1); }
+      from { filter: blur(var(--blur, 14px)); transform: scale(var(--z0, 1.06)); }
+      to   { filter: blur(0);                 transform: scale(1); }
     }
 
     /* ==================== Pinterest 圖牆模式 ==================== */
@@ -232,6 +238,7 @@
   <div id="hint" data-i18n="hint.slideshow">點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片資訊</div>
   <div id="msg" style="display:none"></div>
   <script src="i18n.js"></script>
+  <script src="fx.js"></script>
   <script src="slideshow.js"></script>
 </body>
 </html>

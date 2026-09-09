@@ -5,7 +5,9 @@ let cfg = null;
 let showingA = true;
 let current = null; // { path, index }
 
-const EFFECTS = ['fade', 'slide', 'zoom', 'wipe', 'kenburns', 'zoomout', 'pan', 'drift', 'crosszoom', 'focus'];
+const EFFECTS = window.FX.EFFECTS;
+let FXS = null;              // 各效果的專屬設定（由 cfg.fx 正規化而來）
+const fxOf = (name) => (FXS && FXS[name]) || {};
 const el = (id) => document.getElementById(id);
 
 // 把本機路徑轉成 file:// URL（處理 Windows 反斜線與特殊字元）
@@ -34,6 +36,95 @@ function pickEffect() {
   let ef = cfg.effect || 'fade';
   if (ef === 'random') ef = EFFECTS[Math.floor(Math.random() * EFFECTS.length)];
   return ef;
+}
+
+const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const numv = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+
+// 把某個效果的設定換算成 CSS 變數。
+//   incoming / outgoing：進場、退場的 slide 元素（負責進出場動畫的變數）
+//   img：進場那張圖（負責慢動作類的變數；寫在 img 上，才不會蓋掉舊圖正在跑的動畫）
+function applyEffectVars(ef, incoming, outgoing, img) {
+  const f = fxOf(ef);
+  const dur = ef === 'none' ? 0 : numv(f.durMs, 700);
+  const S = incoming.style, O = outgoing.style, I = img.style;
+
+  S.setProperty('--dur', dur + 'ms');
+  O.setProperty('--dur', dur + 'ms');
+  if (f.ease) { S.setProperty('--ease', f.ease); O.setProperty('--ease', f.ease); }
+
+  // 慢動作（Ken Burns 類）總長度 = 這張的停留時間 + 進場時間
+  I.setProperty('--kb-dur', (cfg.intervalMs + dur) + 'ms');
+
+  // 縮放原點：隨機讓每張圖的移動方向不同，或固定置中
+  const origins = ['20% 20%', '80% 20%', '20% 80%', '80% 80%', '50% 50%'];
+  img.style.transformOrigin = f.origin === 'center' ? '50% 50%' : rand(origins);
+
+  const dirOf = (d) => (d && d !== 'random' ? d : rand(['left', 'right', 'up', 'down']));
+  const z = (v, d) => String(numv(v, d) / 100);
+
+  switch (ef) {
+    case 'slide': {
+      // 新圖從一側滑入，舊圖往同方向滑出
+      const map = {
+        left:  ['100%, 0', '-100%, 0'],
+        right: ['-100%, 0', '100%, 0'],
+        up:    ['0, 100%', '0, -100%'],
+        down:  ['0, -100%', '0, 100%'],
+      };
+      const [sf, st] = map[dirOf(f.dir)];
+      S.setProperty('--sf', sf); S.setProperty('--st', st);
+      O.setProperty('--st', st);
+      break;
+    }
+    case 'wipe': {
+      // clip-path 的起始 inset（top right bottom left）決定往哪個方向揭開
+      const map = {
+        right: '0 100% 0 0',
+        left:  '0 0 0 100%',
+        up:    '100% 0 0 0',
+        down:  '0 0 100% 0',
+      };
+      S.setProperty('--wipe', map[dirOf(f.dir)]);
+      break;
+    }
+    case 'zoom':
+      S.setProperty('--zin', z(f.zoomFrom, 120));
+      break;
+    case 'kenburns':
+    case 'zoomout':
+      I.setProperty('--z0', z(f.zoomFrom, 100));
+      I.setProperty('--z1', z(f.zoomTo, 118));
+      break;
+    case 'pan': {
+      const dist = numv(f.dist, 5).toFixed(2);
+      const axis = f.axis && f.axis !== 'random' ? f.axis : rand(['h', 'v']);
+      const pd = rand(axis === 'h'
+        ? [[`-${dist}%, 0`, `${dist}%, 0`], [`${dist}%, 0`, `-${dist}%, 0`]]
+        : [[`0, -${dist}%`, `0, ${dist}%`], [`0, ${dist}%`, `0, -${dist}%`]]);
+      I.setProperty('--z0', z(f.zoom, 122));
+      I.setProperty('--pf', pd[0]);
+      I.setProperty('--pt', pd[1]);
+      break;
+    }
+    case 'drift':
+      I.setProperty('--z0', z(f.zoomFrom, 106));
+      I.setProperty('--z1', z(f.zoomTo, 116));
+      I.setProperty('--rot', numv(f.rotate, 1.6) + 'deg');
+      break;
+    case 'crosszoom':
+      S.setProperty('--czi', z(f.zoomFrom, 86));
+      S.setProperty('--czo', z(f.zoomTo, 120));
+      O.setProperty('--czo', z(f.zoomTo, 120));
+      I.setProperty('--z0', '1');
+      I.setProperty('--z1', z(f.slowZoom, 118));
+      break;
+    case 'focus':
+      I.setProperty('--blur', numv(f.blur, 14) + 'px');
+      I.setProperty('--fdur', numv(f.focusMs, 2100) + 'ms');
+      I.setProperty('--z0', z(f.zoomFrom, 106));
+      break;
+  }
 }
 
 let switching = false; // 防止重入：上一次切換還沒完成時忽略新的觸發
@@ -75,24 +166,11 @@ async function next() {
 
     // 效果套在 slide 元素上（而非舞台）：舊圖的 img 動畫在淡出期間才能無縫延續，
     // 不會因規則失效而瞬間跳回原始 transform。
-    incoming.className = 'slide effect-' + pickEffect();
+    const ef = pickEffect();
+    incoming.className = 'slide effect-' + ef;
 
-    // Ken Burns / 拉遠 / 漂移：隨機縮放原點，讓每張圖的移動方向不同
-    const origins = ['20% 20%', '80% 20%', '20% 80%', '80% 80%', '50% 50%'];
-    img.style.transformOrigin = origins[Math.floor(Math.random() * origins.length)];
-
-    // 平移效果：隨機挑一個移動方向（左→右、右→左、上→下、下→上）
-    // 平移距離也隨動態幅度 intensity 放大（基準 2.5% × 倍率）
-    const pa = (2.5 * (cfg.intensity || 2)).toFixed(2);
-    const panDirs = [
-      [`-${pa}%, 0`, `${pa}%, 0`],
-      [`${pa}%, 0`, `-${pa}%, 0`],
-      [`0, -${pa}%`, `0, ${pa}%`],
-      [`0, ${pa}%`, `0, -${pa}%`],
-    ];
-    const pd = panDirs[Math.floor(Math.random() * panDirs.length)];
-    img.style.setProperty('--pf', pd[0]);
-    img.style.setProperty('--pt', pd[1]);
+    // 依「這個效果自己的設定」把 CSS 變數寫進 inline style
+    applyEffectVars(ef, incoming, outgoing, img);
 
     // in→out 在同一次樣式計算內完成，且 .in/.out 的 img 動畫宣告相同 → 動畫不中斷
     outgoing.classList.remove('in');
@@ -662,10 +740,9 @@ window.api.onConfig(async (config) => {
   // 舊設定相容：fade 布林 → effect
   if (!cfg.effect) cfg.effect = cfg.fade === false ? 'none' : 'fade';
 
-  const dur = cfg.effect === 'none' ? 0 : 700;
+  // 各效果的專屬設定（缺的欄位補預設值；舊設定用 intensity 換算，手感不變）
+  FXS = window.FX.normalize(cfg);
   const root = document.documentElement.style;
-  root.setProperty('--dur', dur + 'ms');
-  root.setProperty('--kb-dur', (cfg.intervalMs + dur) + 'ms');
   root.setProperty('--scale-mode', cfg.scaleMode || 'contain');
   // 動態幅度倍率：控制縮放／平移／旋轉的移動量（預設 2）
   root.setProperty('--i', String(cfg.intensity || 2));

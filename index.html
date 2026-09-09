@@ -50,9 +50,12 @@
     .inline { display: flex; align-items: center; gap: 8px; }
     .inline input[type="number"] { width: 90px; }
     .inline span { font-size: 13px; color: #b8b8c0; }
-    /* Pinterest 圖牆的細部設定（僅在選擇該效果時顯示）*/
+    /* 細部設定區塊（僅在選到對應效果時顯示）*/
     #wallOpts { display: none; margin-top: -6px; }
     #wallOpts.on { display: block; }
+    #fxOpts { margin-top: -6px; }
+    .fxPanel { display: none; margin-bottom: 18px; }
+    .fxPanel.on { display: block; }
     .sub {
       border: 1px solid #33333d; border-radius: 10px;
       padding: 14px 14px 4px; background: #23232b;
@@ -90,15 +93,6 @@
   </div>
 
   <div class="field">
-    <label data-i18n="field.intensity">動態幅度</label>
-    <div class="inline">
-      <input type="number" id="intensity" min="0.1" max="100" step="0.5" value="2" />
-      <span data-i18n="unit.times">倍</span>
-    </div>
-    <div class="hint" data-i18n="hint.intensity">數字越大，縮放／平移／旋轉的移動越明顯（建議 1–4）。</div>
-  </div>
-
-  <div class="field">
     <label data-i18n="field.scaleMode">縮放模式</label>
     <select id="scaleMode">
       <option value="contain" selected data-i18n="scale.contain">符合畫面（Fit）</option>
@@ -128,6 +122,8 @@
     </select>
   </div>
 
+  <!-- 各切換效果的專屬設定（由 renderer.js 依 fx.js 的定義動態產生，只顯示目前選到的效果）-->
+  <div id="fxOpts"></div>
 
   <div id="wallOpts">
     <div class="sub">
@@ -249,6 +245,13 @@
         </div>
       </div>
       <div class="field">
+        <label for="intensity" data-i18n="wall.breatheScale">呼吸幅度</label>
+        <div class="inline">
+          <input type="number" id="intensity" min="0.1" max="100" step="0.5" value="2" />
+          <span data-i18n="unit.times">倍</span>
+        </div>
+      </div>
+      <div class="field">
         <label data-i18n="wall.replace">每輪換圖比例</label>
         <div class="inline">
           <input type="number" id="wallReplacePct" min="0" max="100" step="5" value="80" />
@@ -283,6 +286,7 @@
   <div class="hint" data-i18n="hint.settings">播放時：點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片路徑與資訊。</div>
 
   <script src="i18n.js"></script>
+  <script src="fx.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

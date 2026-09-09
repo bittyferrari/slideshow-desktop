@@ -45,6 +45,7 @@ function refreshCountLabel() {
 // 啟動時還原上次的設定
 async function restoreSettings() {
   const s = (await window.api.loadSettings()) || {};
+  buildFxPanels();          // 先產生面板，語言套用時才翻得到
   initLanguage(s.lang);
   if (typeof s.dir === 'string' && s.dir) {
     selectedDir = s.dir;
@@ -66,7 +67,8 @@ async function restoreSettings() {
   restoreWallFields(s);
   if (typeof s.wallSwapMode === 'string') el('wallSwapMode').value = s.wallSwapMode;
   if (typeof s.wallBreathe === 'boolean') el('wallBreathe').checked = s.wallBreathe;
-  toggleWallOpts();
+  restoreFx(s);
+  toggleEffectOpts();
   if (selectedDir) await refreshCount();
 }
 
@@ -91,11 +93,130 @@ const WALL_FIELDS = [
   ['wallReplacePct', 'wallReplacePct', 80, 1],
 ];
 
-// 只有選「Pinterest 圖牆」時才顯示細部設定
-function toggleWallOpts() {
-  el('wallOpts').classList.toggle('on', el('effect').value === 'wall');
+
+// ---- 各切換效果的專屬設定 ----
+// 面板依 fx.js 的 SPECS 動態產生：選到哪個效果就只顯示那個效果的參數，
+// 每個效果的數值各自獨立儲存在 settings.json 的 fx 物件底下。
+const fxId = (name, key) => 'fx_' + name + '_' + key;
+
+function fxField(name, p) {
+  const id = fxId(name, p.k);
+  const d = document.createElement('div');
+  d.className = 'field';
+  const lab = document.createElement('label');
+  lab.setAttribute('for', id);
+  lab.setAttribute('data-i18n', p.label);
+  d.appendChild(lab);
+  if (p.kind === 'sel') {
+    d.style.gridColumn = '1 / -1';
+    const sel = document.createElement('select');
+    sel.id = id;
+    for (const [v, key] of p.opts) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.setAttribute('data-i18n', key);
+      sel.appendChild(o);
+    }
+    d.appendChild(sel);
+  } else {
+    const inl = document.createElement('div');
+    inl.className = 'inline';
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.id = id;
+    inp.min = String(p.min); inp.max = String(p.max); inp.step = String(p.step);
+    inl.appendChild(inp);
+    if (p.unit) {
+      const sp = document.createElement('span');
+      sp.setAttribute('data-i18n', p.unit);
+      inl.appendChild(sp);
+    }
+    d.appendChild(inl);
+  }
+  return d;
 }
-el('effect').addEventListener('change', toggleWallOpts);
+
+function fxPanel(name, spec) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fxPanel';
+  wrap.dataset.fx = name;
+  const sub = document.createElement('div');
+  sub.className = 'sub';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.setAttribute('data-i18n', 'effect.' + name);
+  sub.appendChild(title);
+  if (spec.length === 0) {
+    const h = document.createElement('div');
+    h.className = 'hint';
+    h.style.marginBottom = '12px';
+    h.setAttribute('data-i18n', 'fx.noOpts');
+    sub.appendChild(h);
+  } else {
+    const grid = document.createElement('div');
+    grid.className = 'grid2';
+    for (const p of spec) grid.appendChild(fxField(name, p));
+    sub.appendChild(grid);
+    const h = document.createElement('div');
+    h.className = 'hint';
+    h.style.marginBottom = '12px';
+    h.setAttribute('data-i18n', 'fx.hint');
+    sub.appendChild(h);
+  }
+  wrap.appendChild(sub);
+  return wrap;
+}
+
+function buildFxPanels() {
+  const host = el('fxOpts');
+  host.innerHTML = '';
+  for (const name of Object.keys(window.FX.SPECS)) {
+    host.appendChild(fxPanel(name, window.FX.SPECS[name]));
+  }
+  // 「隨機」沒有自己的參數，只說明它會沿用各效果的設定
+  host.appendChild(fxPanel('random', []));
+  host.querySelector('[data-fx="random"] .hint').setAttribute('data-i18n', 'fx.randomHint');
+}
+
+function restoreFx(s) {
+  const fx = window.FX.normalize(s);
+  for (const name of Object.keys(window.FX.SPECS)) {
+    for (const p of window.FX.SPECS[name]) {
+      const inp = el(fxId(name, p.k));
+      if (!inp) continue;
+      const v = fx[name][p.k];
+      inp.value = (p.kind === 'num' && p.mul !== 1) ? String(v / p.mul) : String(v);
+    }
+  }
+}
+
+function collectFx() {
+  const out = {};
+  for (const name of Object.keys(window.FX.SPECS)) {
+    const o = {};
+    for (const p of window.FX.SPECS[name]) {
+      const inp = el(fxId(name, p.k));
+      if (!inp) continue;
+      if (p.kind === 'sel') { o[p.k] = inp.value; continue; }
+      let v = parseFloat(inp.value);
+      if (!isFinite(v)) v = p.def(2) / p.mul;
+      v = Math.max(p.min, Math.min(p.max, v));
+      o[p.k] = p.mul === 1 ? v : Math.round(v * p.mul);
+    }
+    out[name] = o;
+  }
+  return out;
+}
+
+// 只顯示目前選到的效果的設定面板
+function toggleEffectOpts() {
+  const ef = el('effect').value;
+  el('wallOpts').classList.toggle('on', ef === 'wall');
+  el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
+    w.classList.toggle('on', w.dataset.fx === ef);
+  });
+}
+el('effect').addEventListener('change', toggleEffectOpts);
 
 function restoreWallFields(s) {
   for (const [key, id, def, mul] of WALL_FIELDS) {
@@ -154,6 +275,7 @@ el('start').addEventListener('click', async () => {
     lang: el('lang').value,
     wallSwapMode: el('wallSwapMode').value,
     wallBreathe: el('wallBreathe').checked,
+    fx: collectFx(),
     ...collectWallFields(),
   };
   // 儲存設定，下次開啟時還原
