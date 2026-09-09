@@ -152,9 +152,8 @@ async function updateInfo() {
     ? parts[parts.length - 2] + '\\' + name
     : name;
 
-  let meta = `${current.index} / ${images.length}`;
-  const visible = showingA ? el('slideA') : el('slideB');
-  const img = visible.querySelector('img');
+  let meta = current.index ? `${current.index} / ${images.length}` : '';
+  const img = wallHeroImg || (showingA ? el('slideA') : el('slideB')).querySelector('img');
   if (img.naturalWidth) meta += `　${img.naturalWidth} × ${img.naturalHeight}`;
 
   let fi = fileInfoCache.get(current.path);
@@ -194,6 +193,7 @@ document.addEventListener('mousemove', (e) => {
 // 任何滑鼠或鍵盤按鍵按一下即退出
 function exitNow(e) {
   if (e) e.preventDefault();
+  wallStopped = true;
   window.api.exitSlideshow();
 }
 document.addEventListener('mousedown', exitNow);
@@ -204,6 +204,186 @@ setTimeout(() => {
   const h = el('hint');
   if (h) h.classList.add('hidden');
 }, 4000);
+
+// ==================== Pinterest 圖牆模式 ====================
+// 流程：滿版磚牆顯示很多張圖 → 隔幾秒整個畫面變暗 →
+//       其中一張慢慢提高亮度 → 放大成大圖停留 → 收回圖牆 → 重複。
+let wallMode = false;
+let wallStopped = false;
+let wallTiles = [];      // { box, img }
+let wallHeroImg = null;  // 目前大圖對應的 <img>（給資訊面板用）
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 依序取下一張圖片路徑（走完一輪視設定決定是否重新洗牌／結束）
+function nextImagePath() {
+  if (images.length === 0) return null;
+  if (idx >= images.length) {
+    if (!cfg.loop) return null;
+    idx = 0;
+    if (cfg.shuffle) shuffleArr(images);
+  }
+  return images[idx++];
+}
+
+// 依視窗寬度決定欄數（越寬欄數越多，維持類似 Pinterest 的密度）
+function wallColumns() {
+  const target = 300; // 每欄約略寬度
+  return Math.max(3, Math.min(8, Math.round(window.innerWidth / target)));
+}
+
+function makeTile(path) {
+  const box = document.createElement('div');
+  box.className = 'tile';
+  const img = document.createElement('img');
+  img.src = toFileURL(path);
+  img.dataset.path = path;
+  img.addEventListener('load', () => box.classList.add('shown'));
+  img.addEventListener('error', () => box.remove());
+  box.appendChild(img);
+  return { box, img };
+}
+
+// 建立整面圖牆
+function buildWall() {
+  const wall = el('wall');
+  wall.innerHTML = '';
+  wallTiles = [];
+  const cols = wallColumns();
+  document.documentElement.style.setProperty('--wall-cols', String(cols));
+  const count = Math.min(images.length, cols * 6);
+  for (let i = 0; i < count; i++) {
+    const p = nextImagePath();
+    if (!p) break;
+    const t = makeTile(p);
+    wall.appendChild(t.box);
+    wallTiles.push(t);
+    setTimeout(() => t.box.classList.add('shown'), 60 * i); // 交錯淡入
+  }
+}
+
+// 替換掉部分磚塊，讓圖牆持續有新圖出現
+function refreshTiles(n) {
+  const wall = el('wall');
+  for (let k = 0; k < n; k++) {
+    if (wallTiles.length === 0) return;
+    const i = Math.floor(Math.random() * wallTiles.length);
+    const old = wallTiles[i];
+    const p = nextImagePath();
+    if (!p) return;
+    old.box.classList.remove('shown');
+    setTimeout(() => {
+      const t = makeTile(p);
+      if (old.box.parentNode === wall) wall.replaceChild(t.box, old.box);
+      else wall.appendChild(t.box);
+      wallTiles[i] = t;
+    }, 700);
+  }
+}
+
+// 把某張磚塊的圖飛出來變成大圖
+function heroOpen(tileImg) {
+  const hero = el('hero');
+  const h = el('heroImg');
+  const r = tileImg.getBoundingClientRect();
+  h.classList.remove('breathe');
+  h.src = tileImg.src;
+  h.style.transition = 'none';
+  h.style.left = r.left + 'px';
+  h.style.top = r.top + 'px';
+  h.style.width = r.width + 'px';
+  h.style.height = r.height + 'px';
+  void h.offsetWidth;
+  h.style.transition = '';
+  hero.classList.add('on');
+
+  const nw = tileImg.naturalWidth || r.width;
+  const nh = tileImg.naturalHeight || r.height;
+  const s = Math.min((window.innerWidth * 0.86) / nw, (window.innerHeight * 0.88) / nh);
+  const w = nw * s, ht = nh * s;
+  h.style.left = ((window.innerWidth - w) / 2) + 'px';
+  h.style.top = ((window.innerHeight - ht) / 2) + 'px';
+  h.style.width = w + 'px';
+  h.style.height = ht + 'px';
+}
+
+// 大圖收回原本磚塊的位置
+function heroClose(tileImg) {
+  const h = el('heroImg');
+  h.classList.remove('breathe');
+  const r = tileImg.getBoundingClientRect();
+  h.style.left = r.left + 'px';
+  h.style.top = r.top + 'px';
+  h.style.width = r.width + 'px';
+  h.style.height = r.height + 'px';
+  el('hero').classList.remove('on');
+}
+
+async function wallLoop() {
+  const base = cfg.intervalMs || 4000;
+  const wallHold = Math.max(2500, base);        // 圖牆停留
+  const spotMs = 1600;                          // 慢慢提高亮度
+  const flyMs = 900;                            // 放大／收回
+  const bigHold = Math.max(3000, base * 1.5);   // 大圖停留
+
+  while (!wallStopped) {
+    await sleep(wallHold);
+    if (wallStopped) return;
+
+    // 挑一張已載入完成的磚塊
+    const cands = wallTiles.filter((t) => t.box.classList.contains('shown') && t.img.naturalWidth);
+    if (cands.length === 0) { await sleep(600); continue; }
+    const pick = cands[Math.floor(Math.random() * cands.length)];
+
+    // 1) 畫面變暗
+    el('wall').classList.add('dimmed');
+    await sleep(900);
+    if (wallStopped) return;
+
+    // 2) 那張慢慢提高亮度
+    pick.box.classList.add('spot');
+    wallHeroImg = pick.img;
+    current = { path: pick.img.dataset.path, index: 0 };
+    if (infoVisible) updateInfo();
+    await sleep(spotMs);
+    if (wallStopped) return;
+
+    // 3) 顯示這張大圖
+    heroOpen(pick.img);
+    await sleep(flyMs);
+    el('heroImg').classList.add('breathe');
+    await sleep(bigHold);
+    if (wallStopped) return;
+
+    // 4) 收回圖牆，回復亮度
+    heroClose(pick.img);
+    await sleep(flyMs);
+    pick.box.classList.remove('spot');
+    el('wall').classList.remove('dimmed');
+    wallHeroImg = null;
+
+    // 5) 換上一些新圖，讓牆面持續更新
+    refreshTiles(Math.max(2, Math.round(wallTiles.length / 5)));
+    await sleep(600);
+  }
+}
+
+function wallStart() {
+  if (images.length === 0) {
+    showMessage(window.I18N.t('msg.noImages'));
+    return;
+  }
+  wallMode = true;
+  wallStopped = false;
+  document.body.classList.add('wall-mode');
+  buildWall();
+  wallLoop();
+}
+
+// 視窗大小改變時重算欄數
+window.addEventListener('resize', () => {
+  if (wallMode) document.documentElement.style.setProperty('--wall-cols', String(wallColumns()));
+});
 
 // 接收主行程送來的設定並開始
 window.api.onConfig(async (config) => {
@@ -225,5 +405,7 @@ window.api.onConfig(async (config) => {
   images = await window.api.listImages(config.dir, config.recursive);
   if (config.shuffle) shuffleArr(images);
   idx = 0;
-  start();
+  // Pinterest 圖牆模式走另一條播放流程
+  if (cfg.effect === 'wall') wallStart();
+  else start();
 });
