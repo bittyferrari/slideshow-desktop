@@ -154,7 +154,7 @@ async function updateInfo() {
 
   let meta = current.index ? `${current.index} / ${images.length}` : '';
   const img = wallHeroImg || (showingA ? el('slideA') : el('slideB')).querySelector('img');
-  if (img.naturalWidth) meta += `　${img.naturalWidth} × ${img.naturalHeight}`;
+  if (img && img.naturalWidth) meta += `　${img.naturalWidth} × ${img.naturalHeight}`;
 
   let fi = fileInfoCache.get(current.path);
   if (fi === undefined) {
@@ -210,19 +210,18 @@ setTimeout(() => {
 //       其中一張慢慢提高亮度 → 放大成大圖停留 → 收回。
 //       一輪可聚焦多張，一輪結束後依設定比例換掉舊圖，持續循環。
 //
-// 版面：自製 masonry。每塊磚絕對定位、用 transform 決定位置，高度依圖片原始
-// 比例算好；圖片一律先 decode 完成才進場，所以不會有「載入後把版面撐開」的跳動。
-// 換圖有兩種方式：
-//   fade — 原地淡出換圖再淡入（磚塊高度不變）
-//   push — 移除那張，同一欄下面的往上推補位，欄底再補上新圖
+// 版面：自製 masonry。每塊磚絕對定位、用 transform 決定位置。
+// 效能：磚塊放的是 <canvas> 縮圖（原圖用完即釋放），變暗用單一全域黑幕，
+//       大圖只動 transform，所以在低階機器上也能維持流暢。
 let wallMode = false;
 let wallStopped = false;
 let wallTiles = [];      // 所有磚塊（扁平）
 let wallCols = [];       // 每一欄的磚塊陣列
 let wallColH = [];       // 每一欄目前的高度
 let wallColW = 0;        // 欄寬
+let wallThumbW = 0;      // 縮圖的實際像素寬
 let wallH = 0;           // 可視高度
-let wallHeroImg = null;  // 目前大圖對應的 <img>（給資訊面板用）
+let wallHeroImg = null;  // 目前大圖（給資訊面板取尺寸用）
 let W = null;            // 圖牆各項設定（由 cfg 展開，含預設值）
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -239,14 +238,16 @@ function wallSettings() {
     holdMs: num(cfg.wallHoldMs, 1000),                // 圖牆停留
     dim: num(cfg.wallDim, 40) / 100,                  // 變暗後亮度
     dimMs: num(cfg.wallDimMs, 500),                   // 變暗過程
-    spotMs: num(cfg.wallSpotMs, 800),                // 慢慢提高亮度
-    flyMs: num(cfg.wallFlyMs, 1000),                   // 放大／收回
-    bigMs: num(cfg.wallBigMs, 3000),// 大圖停留
-    bigScale: num(cfg.wallBigScale, 100) / 100,        // 大圖占畫面比例
+    spotMs: num(cfg.wallSpotMs, 800),                 // 慢慢提高亮度
+    flyMs: num(cfg.wallFlyMs, 1000),                  // 放大／收回
+    bigMs: num(cfg.wallBigMs, 3000),                  // 大圖停留
+    bigScale: num(cfg.wallBigScale, 100) / 100,       // 大圖占畫面比例
     spots: Math.max(1, num(cfg.wallSpots, 2)),        // 一輪聚焦幾張
     replacePct: num(cfg.wallReplacePct, 80),          // 一輪換掉幾 % 的圖
     swap: cfg.wallSwapMode || 'push',                 // 換圖方式 fade / push
-    pushMs: num(cfg.wallPushMs, 4000),                 // 往上推的動畫時間
+    pushMs: num(cfg.wallPushMs, 4000),                // 往上推的動畫時間
+    thumbScale: num(cfg.wallThumbScale, 1),           // 縮圖畫質倍率
+    breathe: cfg.wallBreathe !== false,               // 大圖呼吸動畫
   };
 }
 
@@ -254,7 +255,7 @@ function applyWallVars() {
   const r = document.documentElement.style;
   r.setProperty('--wall-gap', W.gap + 'px');
   r.setProperty('--wall-radius', W.radius + 'px');
-  r.setProperty('--wall-dim', String(W.dim));
+  r.setProperty('--veil', String(1 - W.dim));
   r.setProperty('--dim-ms', W.dimMs + 'ms');
   r.setProperty('--spot-ms', W.spotMs + 'ms');
   r.setProperty('--fly-ms', W.flyMs + 'ms');
@@ -283,31 +284,46 @@ function currentCols() {
   return W.cols > 0 ? W.cols : autoColumns();
 }
 
-// 先把圖片解碼完成（拿到真實寬高）才回傳；壞圖回傳 null
-function preload(path) {
+// 讀原圖 → 縮成剛好夠用的 <canvas> → 立刻釋放原圖。
+// 這是低階機器能不能跑順的關鍵：牆上幾十張若都掛原始大圖，
+// 光是解碼後的點陣資料就可能吃掉好幾 GB 記憶體。
+function makeThumb(path) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.src = toFileURL(path);
-    const done = async () => {
-      try { await img.decode(); } catch { return resolve(null); }
-      if (!img.naturalWidth) return resolve(null);
-      resolve({ path, img, w: img.naturalWidth, h: img.naturalHeight });
+    const fail = () => { img.src = ''; resolve(null); };
+    img.onerror = fail;
+    img.onload = async () => {
+      try { await img.decode(); } catch { return fail(); }
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) return fail();
+      const tw = Math.max(1, Math.min(w, Math.round(wallThumbW)));
+      const th = Math.max(1, Math.round(tw * h / w));
+      const cv = document.createElement('canvas');
+      cv.width = tw; cv.height = th;
+      const ctx = cv.getContext('2d', { alpha: false });
+      try {
+        const bmp = await createImageBitmap(img, { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high' });
+        ctx.drawImage(bmp, 0, 0);
+        bmp.close();
+      } catch {
+        ctx.drawImage(img, 0, 0, tw, th);
+      }
+      img.src = ''; // 釋放原圖
+      resolve({ path, canvas: cv, nw: w, nh: h });
     };
-    img.onload = done;
-    img.onerror = () => resolve(null);
-    if (img.complete) done();
+    img.src = toFileURL(path);
   });
 }
 
-// 併發載入 n 張可用的圖（自動跳過壞圖），全部 decode 完成才回傳
-async function preloadMany(n, concurrency = 6) {
+// 併發做 n 張縮圖（自動跳過壞圖）。併發數不開太高，免得縮圖把 CPU 佔滿。
+async function preloadMany(n, concurrency = 3) {
   const out = [];
   let exhausted = false;
   async function worker() {
     while (out.length < n && !exhausted && !wallStopped) {
       const p = nextImagePath();
       if (!p) { exhausted = true; return; }
-      const r = await preload(p);
+      const r = await makeThumb(p);
       if (r && out.length < n) out.push(r);
     }
   }
@@ -315,18 +331,29 @@ async function preloadMany(n, concurrency = 6) {
   return out;
 }
 
+// 大圖才載入原始解析度（一次只有一張）
+function loadFull(path) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onerror = () => resolve(null);
+    img.onload = async () => {
+      try { await img.decode(); } catch { return resolve(null); }
+      resolve(img.naturalWidth ? img : null);
+    };
+    img.src = toFileURL(path);
+  });
+}
+
 // ---- 版面：絕對定位的 masonry ----
 function tileX(c) { return c * (wallColW + W.gap); }
 
 function place(t, animate) {
-  if (!animate) {
-    t.box.style.transition = 'none';
-    t.box.style.transform = `translate3d(${tileX(t.col)}px, ${t.y}px, 0)`;
-    void t.box.offsetWidth;
-    t.box.style.transition = '';
-  } else {
-    t.box.style.transform = `translate3d(${tileX(t.col)}px, ${t.y}px, 0)`;
-  }
+  const tr = `translate3d(${tileX(t.col)}px, ${t.y}px, 0)`;
+  if (animate) { t.box.style.transform = tr; return; }
+  t.box.style.transition = 'none';
+  t.box.style.transform = tr;
+  void t.box.offsetWidth;
+  t.box.style.transition = '';
 }
 
 // 重排某一欄（由上往下重新堆疊）→ 移除一張後下面的會往上推
@@ -348,19 +375,21 @@ function shortestCol() {
 }
 
 // 在指定欄的最底部加一塊磚
-function addTile(c, loaded) {
-  const h = Math.round(wallColW * (loaded.h / loaded.w));
+function addTile(c, thumb) {
+  const h = Math.round(wallColW * (thumb.nh / thumb.nw));
   const box = document.createElement('div');
   box.className = 'tile';
   box.style.width = wallColW + 'px';
   box.style.height = h + 'px';
   const inner = document.createElement('div');
   inner.className = 'tile-inner';
-  loaded.img.dataset.path = loaded.path;
-  inner.appendChild(loaded.img);
+  const veil = document.createElement('div');
+  veil.className = 'tile-veil';
+  inner.appendChild(thumb.canvas);
+  inner.appendChild(veil);
   box.appendChild(inner);
 
-  const t = { box, img: loaded.img, col: c, y: wallColH[c], h };
+  const t = { box, inner, veil, canvas: thumb.canvas, path: thumb.path, nw: thumb.nw, nh: thumb.nh, col: c, y: wallColH[c], h };
   el('wallInner').appendChild(box);
   place(t, false); // 首次定位不做動畫
   wallCols[c].push(t);
@@ -376,13 +405,16 @@ function removeTile(t) {
   const j = wallTiles.indexOf(t);
   if (j >= 0) wallTiles.splice(j, 1);
   t.box.classList.add('gone');
-  setTimeout(() => t.box.remove(), W.pushMs + 200);
+  setTimeout(() => {
+    t.box.remove();
+    t.canvas.width = t.canvas.height = 0; // 主動釋放縮圖記憶體
+  }, W.pushMs + 200);
 }
 
-// 建立整面圖牆：全部載入完成 → 算好位置 → 一張張顯示
+// 建立整面圖牆：縮圖全部做好 → 算好位置 → 一張張顯示
 async function buildWall() {
   const wall = el('wall');
-  wall.innerHTML = '<div id="wallInner"></div>';
+  el('wallInner').innerHTML = '';
   wallTiles = [];
 
   const cols = currentCols();
@@ -390,10 +422,12 @@ async function buildWall() {
   const innerW = rect.width - W.gap * 2;
   wallH = rect.height - W.gap * 2;
   wallColW = Math.floor((innerW - W.gap * (cols - 1)) / cols);
+  // 縮圖只要夠實際顯示大小即可（含螢幕縮放），再乘上畫質倍率
+  wallThumbW = Math.round(wallColW * (window.devicePixelRatio || 1) * W.thumbScale);
   wallCols = Array.from({ length: cols }, () => []);
   wallColH = new Array(cols).fill(0);
 
-  // 每欄填到超出畫面一些（下方留有備援磚塊，往上推時才有東西補進來）
+  // 每欄填到超出畫面一些（下方留有備援磚塊，往上推時才有東西補）
   const target = wallH * 1.25;
   const cap = Math.max(cols, Math.round(cols * W.rows));
   const created = [];
@@ -401,28 +435,27 @@ async function buildWall() {
     if (wallColH[shortestCol()] >= target) break;
     const batch = await preloadMany(Math.min(cols, cap - wallTiles.length));
     if (batch.length === 0) break;
-    for (const ld of batch) created.push(addTile(shortestCol(), ld));
+    for (const th of batch) created.push(addTile(shortestCol(), th));
   }
   if (wallStopped) return;
 
-  // 短時間一張一張顯示（只動 opacity，不影響版面）
   created.forEach((t, i) => setTimeout(() => t.box.classList.add('shown'), W.staggerMs * i));
   await sleep(W.staggerMs * created.length + 400);
 }
 
 // ---- 換圖方式 A：原地淡出／淡入（磚塊高度不變）----
-async function replaceFade(picks, loaded) {
+async function replaceFade(picks, thumbs) {
   picks.forEach((t, k) => setTimeout(() => t.box.classList.remove('shown'), W.staggerMs * k));
   await sleep(W.staggerMs * picks.length + Math.max(400, W.dimMs * 0.8));
   if (wallStopped) return;
 
   const done = [];
   picks.forEach((t, k) => {
-    const nd = loaded[k];
+    const nd = thumbs[k];
     if (!nd) return;
-    nd.img.dataset.path = nd.path;
-    t.box.querySelector('.tile-inner').replaceChild(nd.img, t.img);
-    t.img = nd.img;
+    t.inner.replaceChild(nd.canvas, t.canvas);
+    t.canvas.width = t.canvas.height = 0;
+    t.canvas = nd.canvas; t.path = nd.path; t.nw = nd.nw; t.nh = nd.nh;
     done.push(t);
   });
   done.forEach((t, k) => setTimeout(() => t.box.classList.add('shown'), W.staggerMs * k));
@@ -430,19 +463,19 @@ async function replaceFade(picks, loaded) {
 }
 
 // ---- 換圖方式 B：移除 → 下面的往上推 → 欄底補新圖 ----
-function pushOne(t, loaded) {
+function pushOne(t, thumb) {
   const c = t.col;
   removeTile(t);
   relayoutColumn(c, true);      // 同一欄下面的磚塊往上推補位
-  const nt = addTile(c, loaded); // 欄底補上新圖（從畫面下緣進場）
+  const nt = addTile(c, thumb); // 欄底補上新圖（從畫面下緣進場）
   requestAnimationFrame(() => nt.box.classList.add('shown'));
 }
 
-async function replacePush(picks, loaded) {
+async function replacePush(picks, thumbs) {
   const step = Math.max(90, W.staggerMs * 2);
   for (let k = 0; k < picks.length && !wallStopped; k++) {
-    if (!loaded[k]) break;
-    pushOne(picks[k], loaded[k]);
+    if (!thumbs[k]) break;
+    pushOne(picks[k], thumbs[k]);
     await sleep(step);
   }
   await sleep(W.pushMs);
@@ -454,18 +487,18 @@ async function topUpColumns() {
   const target = wallH * 1.15;
   const cap = Math.max(wallCols.length, Math.round(wallCols.length * W.rows * 1.5));
   while (!wallStopped && wallTiles.length < cap) {
-    const short = wallColH.map((h, c) => (h < target ? c : -1)).filter((c) => c >= 0);
-    if (short.length === 0) return;
-    const batch = await preloadMany(short.length);
+    const short = wallColH.filter((h) => h < target).length;
+    if (short === 0) return;
+    const batch = await preloadMany(short);
     if (batch.length === 0) return;
-    for (const ld of batch) {
-      const t = addTile(shortestCol(), ld);
+    for (const th of batch) {
+      const t = addTile(shortestCol(), th);
       requestAnimationFrame(() => t.box.classList.add('shown'));
     }
   }
 }
 
-// 一輪結束後換掉一定比例的舊圖：新圖先在背景載入完成，才開始動
+// 一輪結束後換掉一定比例的舊圖：縮圖先在背景做好，才開始動
 async function replaceTiles(pct) {
   const n = Math.min(wallTiles.length, Math.round(wallTiles.length * (pct / 100)));
   if (n <= 0) return;
@@ -474,83 +507,99 @@ async function replaceTiles(pct) {
   shuffleArr(order);
   const picks = order.slice(0, n);
 
-  const loaded = await preloadMany(picks.length);
-  if (wallStopped || loaded.length === 0) return;
+  const thumbs = await preloadMany(picks.length);
+  if (wallStopped || thumbs.length === 0) return;
 
-  if (W.swap === 'fade') await replaceFade(picks, loaded);
-  else await replacePush(picks, loaded);
+  if (W.swap === 'fade') await replaceFade(picks, thumbs);
+  else await replacePush(picks, thumbs);
 }
 
-// 把某張磚塊的圖飛出來變成大圖。
-// 起點用「完整圖片在該磚塊裁切前的虛擬矩形」，讓大圖是從那張圖長出來的，不會變形。
-function tileFullRect(tileImg) {
-  const r = tileImg.getBoundingClientRect();
-  const nw = tileImg.naturalWidth || r.width;
-  const nh = tileImg.naturalHeight || r.height;
-  const s = Math.max(r.width / nw, r.height / nh); // object-fit: cover
-  const w = nw * s, h = nh * s;
-  return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h, nw, nh };
-}
-
-function setRect(h, r) {
-  h.style.left = r.left + 'px';
-  h.style.top = r.top + 'px';
-  h.style.width = r.width + 'px';
-  h.style.height = r.height + 'px';
-}
-
-function heroOpen(tileImg) {
+// ---- 大圖：全程只動 transform（translate + scale），不動版面屬性 ----
+function heroOpen(fullImg, tile) {
   const hero = el('hero');
-  const h = el('heroImg');
-  const from = tileFullRect(tileImg);
-  h.classList.remove('breathe');
-  h.src = tileImg.src;
-  h.style.transition = 'none';
-  setRect(h, from);
-  void h.offsetWidth;
-  h.style.transition = '';
-  hero.classList.add('on');
+  const box = el('heroBox');
+  const im = el('heroImg');
 
-  const s = Math.min((window.innerWidth * W.bigScale) / from.nw, (window.innerHeight * W.bigScale) / from.nh);
-  const w = from.nw * s, ht = from.nh * s;
-  setRect(h, { left: (window.innerWidth - w) / 2, top: (window.innerHeight - ht) / 2, width: w, height: ht });
+  const r = tile.box.getBoundingClientRect();
+  const nw = fullImg.naturalWidth, nh = fullImg.naturalHeight;
+  const s = Math.min((window.innerWidth * W.bigScale) / nw, (window.innerHeight * W.bigScale) / nh);
+  const tw = nw * s, th = nh * s;
+  const tx = (window.innerWidth - tw) / 2, ty = (window.innerHeight - th) / 2;
+
+  im.classList.remove('breathe');
+  im.src = fullImg.src;
+  box.style.width = tw + 'px';
+  box.style.height = th + 'px';
+
+  // 起點：把最終大小縮回磚塊的位置與尺寸（等比，所以不會變形）
+  const k = Math.max(r.width / tw, r.height / th);
+  const fx = r.left + (r.width - tw * k) / 2;
+  const fy = r.top + (r.height - th * k) / 2;
+  box.style.transition = 'none';
+  box.style.transform = `translate3d(${fx}px, ${fy}px, 0) scale(${k})`;
+  void box.offsetWidth;
+  box.style.transition = '';
+
+  hero.classList.add('on');
+  box.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(1)`;
+  return { r, tw, th };
 }
 
-// 大圖收回原本磚塊的位置
-function heroClose(tileImg) {
-  const h = el('heroImg');
-  h.classList.remove('breathe');
-  setRect(h, tileFullRect(tileImg));
+function heroClose(tile, dims) {
+  const box = el('heroBox');
+  el('heroImg').classList.remove('breathe');
+  const r = tile.box.getBoundingClientRect();
+  const k = Math.max(r.width / dims.tw, r.height / dims.th);
+  const fx = r.left + (r.width - dims.tw * k) / 2;
+  const fy = r.top + (r.height - dims.th * k) / 2;
+  box.style.transform = `translate3d(${fx}px, ${fy}px, 0) scale(${k})`;
   el('hero').classList.remove('on');
 }
 
 // 聚焦一張：提高亮度 → 放大成大圖 → 停留 → 收回
 async function spotlightOne() {
-  // 只挑看得到的（完全在畫面外的備援磚塊不參加）
-  const visible = (t) => t.box.classList.contains('shown') && t.img.naturalWidth && t.y < wallH;
+  const visible = (t) => t.box.classList.contains('shown') && t.y < wallH;
   const cands = wallTiles.filter((t) => visible(t) && !t.box.classList.contains('used'));
   const pool = cands.length ? cands : wallTiles.filter(visible);
   if (pool.length === 0) { await sleep(600); return; }
   const pick = pool[Math.floor(Math.random() * pool.length)];
   pick.box.classList.add('used');
 
+  // 這張浮到黑幕之上，先用自己的黑幕蓋著（視覺上跟其他一樣暗）
+  pick.veil.style.transition = 'none';
+  pick.veil.style.opacity = String(1 - W.dim);
+  void pick.veil.offsetWidth;
+  pick.veil.style.transition = '';
   pick.box.classList.add('spot');
-  wallHeroImg = pick.img;
-  current = { path: pick.img.dataset.path, index: 0 };
+
+  current = { path: pick.path, index: 0 };
   if (infoVisible) updateInfo();
-  await sleep(W.spotMs);
+
+  // 慢慢提高亮度；同時在背景載入原始大圖
+  requestAnimationFrame(() => { pick.veil.style.opacity = '0'; });
+  const [full] = await Promise.all([loadFull(pick.path), sleep(W.spotMs)]);
   if (wallStopped) return;
 
-  heroOpen(pick.img);
-  await sleep(W.flyMs);
-  el('heroImg').classList.add('breathe');
-  await sleep(W.bigMs);
-  if (wallStopped) return;
+  if (full) {
+    wallHeroImg = full;
+    const dims = heroOpen(full, pick);
+    await sleep(W.flyMs);
+    if (wallStopped) return;
+    // 大圖定住後把整面牆藏起來，這段期間 GPU 只需要處理一張圖
+    document.body.classList.add('big');
+    if (W.breathe) el('heroImg').classList.add('breathe');
+    await sleep(W.bigMs);
+    document.body.classList.remove('big');
+    if (wallStopped) return;
+    heroClose(pick, dims);
+    await sleep(W.flyMs);
+    el('heroImg').removeAttribute('src'); // 用完就放掉原圖
+    wallHeroImg = null;
+  }
 
-  heroClose(pick.img);
-  await sleep(W.flyMs);
   pick.box.classList.remove('spot');
-  wallHeroImg = null;
+  pick.veil.style.transition = 'none';
+  pick.veil.style.opacity = '0';
 }
 
 async function wallLoop() {
@@ -559,8 +608,8 @@ async function wallLoop() {
     await sleep(W.holdMs);
     if (wallStopped) return;
 
-    // 2) 畫面變暗
-    el('wall').classList.add('dimmed');
+    // 2) 畫面變暗（單一黑幕）
+    el('dimVeil').classList.add('on');
     await sleep(W.dimMs);
     if (wallStopped) return;
 
@@ -572,7 +621,7 @@ async function wallLoop() {
     if (wallStopped) return;
 
     // 4) 回復亮度
-    el('wall').classList.remove('dimmed');
+    el('dimVeil').classList.remove('on');
     await sleep(W.dimMs);
     if (wallStopped) return;
 

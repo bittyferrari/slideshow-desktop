@@ -108,8 +108,11 @@
     }
 
     /* ==================== Pinterest 圖牆模式 ==================== */
-    /* 自製 masonry：磚塊全部絕對定位，位置用 transform 控制，
-       所以移除一張時下面的可以「往上推」補位，底部再補新圖。 */
+    /* 效能重點（低階機器如 ARM 平板也要順）：
+       1. 磚塊用 <canvas> 縮圖，不放原始大圖 → 記憶體與繪製量降到幾十分之一
+       2. 變暗用「一層全域黑幕」的 opacity，不是每塊磚各自跑 filter: brightness
+       3. 大圖只動 transform（translate + scale），不動 left/top/width/height
+       4. 不長駐 will-change，避免幾十個磚塊各自變成合成層吃光顯示記憶體 */
     #wall {
       position: fixed; inset: 0; overflow: hidden;
       padding: var(--wall-gap, 10px);
@@ -118,22 +121,20 @@
     }
     body.wall-mode #wall { display: block; }
     body.wall-mode #stage { display: none; }
+    /* 大圖完全展開後把整面牆藏起來，這段期間不用合成幾十層 */
+    body.big #wall { visibility: hidden; }
 
     #wallInner { position: absolute; inset: var(--wall-gap, 10px); }
 
     .tile {
       position: absolute; left: 0; top: 0;
-      will-change: transform;
       transition: transform var(--push-ms, 700ms) cubic-bezier(.22,.61,.36,1);
     }
     .tile-inner {
-      width: 100%; height: 100%;
+      position: relative; width: 100%; height: 100%;
       border-radius: var(--wall-radius, 10px); overflow: hidden; background: #111;
       opacity: 0; transform: scale(0.96) translateY(10px);
-      transition: opacity var(--tile-ms, 700ms) ease,
-                  transform var(--tile-ms, 700ms) ease,
-                  filter var(--dim-ms, 900ms) ease;
-      will-change: opacity, transform, filter;
+      transition: opacity var(--tile-ms, 700ms) ease, transform var(--tile-ms, 700ms) ease;
     }
     .tile.shown .tile-inner { opacity: 1; transform: none; }
     /* 被移除的那張：縮小淡出，同一時間下面的磚塊往上推 */
@@ -142,45 +143,51 @@
       transition: opacity calc(var(--push-ms, 700ms) * 0.6) ease,
                   transform calc(var(--push-ms, 700ms) * 0.6) ease;
     }
-    .tile img {
+    .tile canvas {
       display: block; width: 100%; height: 100%; object-fit: cover;
       user-select: none; -webkit-user-drag: none;
     }
-
-    /* 畫面變暗：所有圖降低亮度 */
-    #wall.dimmed .tile.shown .tile-inner {
-      filter: brightness(var(--wall-dim, 0.28)) saturate(0.7);
-      transition: filter var(--dim-ms, 900ms) ease;
+    /* 每塊磚自己的黑幕：只有被聚焦的那張會用到（慢慢淡掉＝慢慢變亮）*/
+    .tile-veil {
+      position: absolute; inset: 0; background: #000;
+      opacity: 0; pointer-events: none;
     }
-    /* 被選中的那張：慢慢提高亮度 */
-    #wall.dimmed .tile.spot .tile-inner {
-      filter: brightness(1) saturate(1.05);
+
+    /* 全域黑幕：整個畫面變暗只靠這一層的 opacity */
+    #dimVeil {
+      position: fixed; inset: 0; background: #000; z-index: 4;
+      opacity: 0; pointer-events: none;
+      transition: opacity var(--dim-ms, 900ms) ease;
+    }
+    #dimVeil.on { opacity: var(--veil, 0.72); }
+
+    /* 被選中的那張：浮到黑幕之上，自己的黑幕慢慢淡掉 */
+    .tile.spot { z-index: 5; }
+    .tile.spot .tile-inner {
       transform: scale(1.04);
-      transition: filter var(--spot-ms, 1600ms) ease-in-out,
-                  transform var(--spot-ms, 1600ms) ease-in-out;
+      transition: transform var(--spot-ms, 1600ms) ease-in-out;
       box-shadow: 0 0 0 2px rgba(255,255,255,0.35), 0 18px 50px rgba(0,0,0,0.75);
     }
-    #wall.dimmed .tile.spot { z-index: 3; }
+    .tile.spot .tile-veil { transition: opacity var(--spot-ms, 1600ms) ease-in-out; }
 
-    /* 大圖層 */
+    /* 大圖層：#heroBox 負責位移縮放（只動 transform），#heroImg 負責呼吸 */
     #hero {
       position: fixed; inset: 0; z-index: 6;
-      background: rgba(0,0,0,0.94);
+      background: rgba(0,0,0,0.96);
       opacity: 0; pointer-events: none;
       transition: opacity var(--fly-ms, 900ms) ease;
     }
     #hero.on { opacity: 1; }
+    #heroBox {
+      position: fixed; left: 0; top: 0; transform-origin: 0 0;
+      transition: transform var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1);
+    }
     #heroImg {
-      position: fixed; object-fit: contain; border-radius: 8px;
-      box-shadow: 0 30px 90px rgba(0,0,0,0.8);
-      transition: left var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
-                  top var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
-                  width var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
-                  height var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1);
-      user-select: none; -webkit-user-drag: none;
+      display: block; width: 100%; height: 100%; object-fit: contain;
+      border-radius: 8px; user-select: none; -webkit-user-drag: none;
     }
     #heroImg.breathe { animation: heroBreathe var(--breathe-ms, 12s) ease-in-out infinite alternate; }
-    @keyframes heroBreathe { from { transform: scale(1); } to { transform: scale(calc(1 + 0.025 * var(--i, 2))); } }
+    @keyframes heroBreathe { from { transform: scale(1); } to { transform: scale(calc(1 + 0.02 * var(--i, 2))); } }
 
     /* 圖片資訊面板（移動滑鼠時顯示）*/
     #info {
@@ -215,7 +222,8 @@
     <div class="slide" id="slideB"><img id="imgB" /></div>
   </div>
   <div id="wall"><div id="wallInner"></div></div>
-  <div id="hero"><img id="heroImg" /></div>
+  <div id="dimVeil"></div>
+  <div id="hero"><div id="heroBox"><img id="heroImg" /></div></div>
   <div id="info">
     <div class="name" id="info-name"></div>
     <div class="path" id="info-path"></div>
