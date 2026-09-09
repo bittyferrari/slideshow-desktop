@@ -210,12 +210,18 @@ setTimeout(() => {
 //       其中一張慢慢提高亮度 → 放大成大圖停留 → 收回。
 //       一輪可聚焦多張，一輪結束後依設定比例換掉舊圖，持續循環。
 //
-// 版面穩定性：圖片一律先 decode（取得真實寬高）才進場；磚塊高度在建牆時
-// 就量好並鎖定（object-fit: cover），之後換圖只換 <img>，版面完全不重排，
-// 所以不會有「圖載入後把版面撐開」的跳動。
+// 版面：自製 masonry。每塊磚絕對定位、用 transform 決定位置，高度依圖片原始
+// 比例算好；圖片一律先 decode 完成才進場，所以不會有「載入後把版面撐開」的跳動。
+// 換圖有兩種方式：
+//   fade — 原地淡出換圖再淡入（磚塊高度不變）
+//   push — 移除那張，同一欄下面的往上推補位，欄底再補上新圖
 let wallMode = false;
 let wallStopped = false;
-let wallTiles = [];      // { box, img }
+let wallTiles = [];      // 所有磚塊（扁平）
+let wallCols = [];       // 每一欄的磚塊陣列
+let wallColH = [];       // 每一欄目前的高度
+let wallColW = 0;        // 欄寬
+let wallH = 0;           // 可視高度
 let wallHeroImg = null;  // 目前大圖對應的 <img>（給資訊面板用）
 let W = null;            // 圖牆各項設定（由 cfg 展開，含預設值）
 
@@ -229,7 +235,7 @@ function wallSettings() {
     cols: num(cfg.wallCols, 0),                       // 0 = 自動
     gap: num(cfg.wallGap, 10),                        // px
     radius: num(cfg.wallRadius, 10),                  // px
-    rows: num(cfg.wallRows, 6),                       // 每欄大約幾張（決定總張數）
+    rows: num(cfg.wallRows, 6),                       // 每欄大約幾張（張數上限用）
     staggerMs: num(cfg.wallStaggerMs, 60),            // 逐張顯示的間隔
     holdMs: num(cfg.wallHoldMs, base),                // 圖牆停留
     dim: num(cfg.wallDim, 28) / 100,                  // 變暗後亮度
@@ -240,6 +246,8 @@ function wallSettings() {
     bigScale: num(cfg.wallBigScale, 86) / 100,        // 大圖占畫面比例
     spots: Math.max(1, num(cfg.wallSpots, 1)),        // 一輪聚焦幾張
     replacePct: num(cfg.wallReplacePct, 60),          // 一輪換掉幾 % 的圖
+    swap: cfg.wallSwapMode || 'push',                 // 換圖方式 fade / push
+    pushMs: num(cfg.wallPushMs, 700),                 // 往上推的動畫時間
   };
 }
 
@@ -251,9 +259,9 @@ function applyWallVars() {
   r.setProperty('--dim-ms', W.dimMs + 'ms');
   r.setProperty('--spot-ms', W.spotMs + 'ms');
   r.setProperty('--fly-ms', W.flyMs + 'ms');
+  r.setProperty('--push-ms', W.pushMs + 'ms');
   r.setProperty('--tile-ms', Math.max(300, Math.round(W.dimMs * 0.8)) + 'ms');
   r.setProperty('--breathe-ms', Math.max(4000, W.bigMs * 2) + 'ms');
-  r.setProperty('--wall-cols', String(W.cols > 0 ? W.cols : autoColumns()));
 }
 
 // 依序取下一張圖片路徑（走完一輪視設定決定是否重新洗牌）
@@ -304,84 +312,174 @@ async function preloadMany(n, concurrency = 6) {
       if (r && out.length < n) out.push(r);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, n) }, worker));
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, n)) }, worker));
   return out;
 }
 
-// 用「已載入完成」的資料做出一塊磚（先以 aspect-ratio 佔位，量完高度再鎖定）
-function makeTile(loaded) {
+// ---- 版面：絕對定位的 masonry ----
+function tileX(c) { return c * (wallColW + W.gap); }
+
+function place(t, animate) {
+  if (!animate) {
+    t.box.style.transition = 'none';
+    t.box.style.transform = `translate3d(${tileX(t.col)}px, ${t.y}px, 0)`;
+    void t.box.offsetWidth;
+    t.box.style.transition = '';
+  } else {
+    t.box.style.transform = `translate3d(${tileX(t.col)}px, ${t.y}px, 0)`;
+  }
+}
+
+// 重排某一欄（由上往下重新堆疊）→ 移除一張後下面的會往上推
+function relayoutColumn(c, animate = true) {
+  let y = 0;
+  for (const t of wallCols[c]) {
+    t.y = y;
+    t.col = c;
+    place(t, animate);
+    y += t.h + W.gap;
+  }
+  wallColH[c] = y;
+}
+
+function shortestCol() {
+  let best = 0;
+  for (let c = 1; c < wallColH.length; c++) if (wallColH[c] < wallColH[best]) best = c;
+  return best;
+}
+
+// 在指定欄的最底部加一塊磚
+function addTile(c, loaded) {
+  const h = Math.round(wallColW * (loaded.h / loaded.w));
   const box = document.createElement('div');
   box.className = 'tile';
-  box.style.aspectRatio = `${loaded.w} / ${loaded.h}`;
-  const img = loaded.img;
-  img.dataset.path = loaded.path;
-  box.appendChild(img);
-  return { box, img };
+  box.style.width = wallColW + 'px';
+  box.style.height = h + 'px';
+  const inner = document.createElement('div');
+  inner.className = 'tile-inner';
+  loaded.img.dataset.path = loaded.path;
+  inner.appendChild(loaded.img);
+  box.appendChild(inner);
+
+  const t = { box, img: loaded.img, col: c, y: wallColH[c], h };
+  el('wallInner').appendChild(box);
+  place(t, false); // 首次定位不做動畫
+  wallCols[c].push(t);
+  wallColH[c] += h + W.gap;
+  wallTiles.push(t);
+  return t;
 }
 
-// 建立整面圖牆：全部載入完成 → 一次插入算好版面 → 鎖定高度 → 一張張淡入
+function removeTile(t) {
+  const list = wallCols[t.col];
+  const i = list.indexOf(t);
+  if (i >= 0) list.splice(i, 1);
+  const j = wallTiles.indexOf(t);
+  if (j >= 0) wallTiles.splice(j, 1);
+  t.box.classList.add('gone');
+  setTimeout(() => t.box.remove(), W.pushMs + 200);
+}
+
+// 建立整面圖牆：全部載入完成 → 算好位置 → 一張張顯示
 async function buildWall() {
   const wall = el('wall');
-  wall.innerHTML = '';
+  wall.innerHTML = '<div id="wallInner"></div>';
   wallTiles = [];
-  const count = Math.min(images.length, Math.max(1, Math.round(currentCols() * W.rows)));
 
-  const loaded = await preloadMany(count);
-  if (wallStopped || loaded.length === 0) return;
+  const cols = currentCols();
+  const rect = wall.getBoundingClientRect();
+  const innerW = rect.width - W.gap * 2;
+  wallH = rect.height - W.gap * 2;
+  wallColW = Math.floor((innerW - W.gap * (cols - 1)) / cols);
+  wallCols = Array.from({ length: cols }, () => []);
+  wallColH = new Array(cols).fill(0);
 
-  const tiles = loaded.map(makeTile);
-  const frag = document.createDocumentFragment();
-  tiles.forEach((t) => frag.appendChild(t.box));
-  wall.appendChild(frag);
-
-  // 量好每塊實際高度後鎖定，之後換圖不會再重排版面
-  void wall.offsetHeight;
-  const heights = tiles.map((t) => t.box.getBoundingClientRect().height);
-  tiles.forEach((t, i) => {
-    t.box.style.aspectRatio = 'auto';
-    t.box.style.height = heights[i] + 'px';
-    t.box.classList.add('locked');
-  });
-  wallTiles = tiles;
+  // 每欄填到超出畫面一些（下方留有備援磚塊，往上推時才有東西補進來）
+  const target = wallH * 1.25;
+  const cap = Math.max(cols, Math.round(cols * W.rows));
+  const created = [];
+  while (!wallStopped && wallTiles.length < cap) {
+    if (wallColH[shortestCol()] >= target) break;
+    const batch = await preloadMany(Math.min(cols, cap - wallTiles.length));
+    if (batch.length === 0) break;
+    for (const ld of batch) created.push(addTile(shortestCol(), ld));
+  }
+  if (wallStopped) return;
 
   // 短時間一張一張顯示（只動 opacity，不影響版面）
-  tiles.forEach((t, i) => setTimeout(() => t.box.classList.add('shown'), W.staggerMs * i));
-  await sleep(W.staggerMs * tiles.length + 400);
+  created.forEach((t, i) => setTimeout(() => t.box.classList.add('shown'), W.staggerMs * i));
+  await sleep(W.staggerMs * created.length + 400);
 }
 
-// 一輪結束後換掉一定比例的舊圖：新圖先在背景載入完成，才淡出／換上
+// ---- 換圖方式 A：原地淡出／淡入（磚塊高度不變）----
+async function replaceFade(picks, loaded) {
+  picks.forEach((t, k) => setTimeout(() => t.box.classList.remove('shown'), W.staggerMs * k));
+  await sleep(W.staggerMs * picks.length + Math.max(400, W.dimMs * 0.8));
+  if (wallStopped) return;
+
+  const done = [];
+  picks.forEach((t, k) => {
+    const nd = loaded[k];
+    if (!nd) return;
+    nd.img.dataset.path = nd.path;
+    t.box.querySelector('.tile-inner').replaceChild(nd.img, t.img);
+    t.img = nd.img;
+    done.push(t);
+  });
+  done.forEach((t, k) => setTimeout(() => t.box.classList.add('shown'), W.staggerMs * k));
+  await sleep(W.staggerMs * done.length + 400);
+}
+
+// ---- 換圖方式 B：移除 → 下面的往上推 → 欄底補新圖 ----
+function pushOne(t, loaded) {
+  const c = t.col;
+  removeTile(t);
+  relayoutColumn(c, true);      // 同一欄下面的磚塊往上推補位
+  const nt = addTile(c, loaded); // 欄底補上新圖（從畫面下緣進場）
+  requestAnimationFrame(() => nt.box.classList.add('shown'));
+}
+
+async function replacePush(picks, loaded) {
+  const step = Math.max(90, W.staggerMs * 2);
+  for (let k = 0; k < picks.length && !wallStopped; k++) {
+    if (!loaded[k]) break;
+    pushOne(picks[k], loaded[k]);
+    await sleep(step);
+  }
+  await sleep(W.pushMs);
+  await topUpColumns();
+}
+
+// 新圖比例跟舊圖不同，欄底可能露出空白 → 補到超出畫面為止
+async function topUpColumns() {
+  const target = wallH * 1.15;
+  const cap = Math.max(wallCols.length, Math.round(wallCols.length * W.rows * 1.5));
+  while (!wallStopped && wallTiles.length < cap) {
+    const short = wallColH.map((h, c) => (h < target ? c : -1)).filter((c) => c >= 0);
+    if (short.length === 0) return;
+    const batch = await preloadMany(short.length);
+    if (batch.length === 0) return;
+    for (const ld of batch) {
+      const t = addTile(shortestCol(), ld);
+      requestAnimationFrame(() => t.box.classList.add('shown'));
+    }
+  }
+}
+
+// 一輪結束後換掉一定比例的舊圖：新圖先在背景載入完成，才開始動
 async function replaceTiles(pct) {
   const n = Math.min(wallTiles.length, Math.round(wallTiles.length * (pct / 100)));
   if (n <= 0) return;
 
-  const order = wallTiles.map((_, i) => i);
+  const order = wallTiles.slice();
   shuffleArr(order);
   const picks = order.slice(0, n);
 
-  // 1) 背景把新圖全部載入完成（此時畫面還是舊圖，不會有空格）
   const loaded = await preloadMany(picks.length);
   if (wallStopped || loaded.length === 0) return;
 
-  // 2) 舊圖交錯淡出
-  picks.forEach((i, k) => setTimeout(() => wallTiles[i].box.classList.remove('shown'), W.staggerMs * k));
-  await sleep(W.staggerMs * picks.length + Math.max(400, W.dimMs * 0.8));
-  if (wallStopped) return;
-
-  // 3) 只換 <img>，磚塊高度不變 → 版面零重排
-  const used = [];
-  picks.forEach((i, k) => {
-    const nd = loaded[k];
-    if (!nd) return;
-    const t = wallTiles[i];
-    nd.img.dataset.path = nd.path;
-    t.box.replaceChild(nd.img, t.img);
-    t.img = nd.img;
-    used.push(i);
-  });
-
-  // 4) 一張張顯示出來
-  used.forEach((i, k) => setTimeout(() => wallTiles[i].box.classList.add('shown'), W.staggerMs * k));
-  await sleep(W.staggerMs * used.length + 400);
+  if (W.swap === 'fade') await replaceFade(picks, loaded);
+  else await replacePush(picks, loaded);
 }
 
 // 把某張磚塊的圖飛出來變成大圖。
@@ -429,9 +527,10 @@ function heroClose(tileImg) {
 
 // 聚焦一張：提高亮度 → 放大成大圖 → 停留 → 收回
 async function spotlightOne() {
-  const ready = (t) => t.box.classList.contains('shown') && t.img.naturalWidth;
-  const cands = wallTiles.filter((t) => ready(t) && !t.box.classList.contains('used'));
-  const pool = cands.length ? cands : wallTiles.filter(ready);
+  // 只挑看得到的（完全在畫面外的備援磚塊不參加）
+  const visible = (t) => t.box.classList.contains('shown') && t.img.naturalWidth && t.y < wallH;
+  const cands = wallTiles.filter((t) => visible(t) && !t.box.classList.contains('used'));
+  const pool = cands.length ? cands : wallTiles.filter(visible);
   if (pool.length === 0) { await sleep(600); return; }
   const pick = pool[Math.floor(Math.random() * pool.length)];
   pick.box.classList.add('used');
@@ -498,16 +597,12 @@ async function wallStart() {
   if (!wallStopped) wallLoop();
 }
 
-// 視窗大小改變時重建圖牆（欄寬變了，鎖定的高度需要重算）
+// 視窗大小改變時重建圖牆（欄寬變了，高度要重算）
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   if (!wallMode) return;
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(async () => {
-    if (wallStopped) return;
-    if (W.cols === 0) document.documentElement.style.setProperty('--wall-cols', String(autoColumns()));
-    await buildWall();
-  }, 400);
+  resizeTimer = setTimeout(() => { if (!wallStopped) buildWall(); }, 400);
 });
 
 // 接收主行程送來的設定並開始

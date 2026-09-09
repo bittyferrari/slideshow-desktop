@@ -108,48 +108,59 @@
     }
 
     /* ==================== Pinterest 圖牆模式 ==================== */
+    /* 自製 masonry：磚塊全部絕對定位，位置用 transform 控制，
+       所以移除一張時下面的可以「往上推」補位，底部再補新圖。 */
     #wall {
       position: fixed; inset: 0; overflow: hidden;
       padding: var(--wall-gap, 10px);
-      column-gap: var(--wall-gap, 10px);
-      column-count: var(--wall-cols, 5);
       display: none;
       background: #000;
     }
     body.wall-mode #wall { display: block; }
     body.wall-mode #stage { display: none; }
 
+    #wallInner { position: absolute; inset: var(--wall-gap, 10px); }
+
     .tile {
-      break-inside: avoid; -webkit-column-break-inside: avoid;
-      margin-bottom: var(--wall-gap, 10px);
-      border-radius: var(--wall-radius, 10px); overflow: hidden;
-      background: #111;
-      opacity: 0;
-      transform: translateY(14px) scale(0.98);
+      position: absolute; left: 0; top: 0;
+      will-change: transform;
+      transition: transform var(--push-ms, 700ms) cubic-bezier(.22,.61,.36,1);
+    }
+    .tile-inner {
+      width: 100%; height: 100%;
+      border-radius: var(--wall-radius, 10px); overflow: hidden; background: #111;
+      opacity: 0; transform: scale(0.96) translateY(10px);
       transition: opacity var(--tile-ms, 700ms) ease,
                   transform var(--tile-ms, 700ms) ease,
                   filter var(--dim-ms, 900ms) ease;
       will-change: opacity, transform, filter;
     }
-    .tile.shown { opacity: 1; transform: translateY(0) scale(1); }
-    .tile img { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
-    /* 高度量好鎖定後，圖片以 cover 填滿磚塊 → 換圖時版面完全不重排 */
-    .tile.locked img { height: 100%; object-fit: cover; }
+    .tile.shown .tile-inner { opacity: 1; transform: none; }
+    /* 被移除的那張：縮小淡出，同一時間下面的磚塊往上推 */
+    .tile.gone .tile-inner {
+      opacity: 0; transform: scale(0.86);
+      transition: opacity calc(var(--push-ms, 700ms) * 0.6) ease,
+                  transform calc(var(--push-ms, 700ms) * 0.6) ease;
+    }
+    .tile img {
+      display: block; width: 100%; height: 100%; object-fit: cover;
+      user-select: none; -webkit-user-drag: none;
+    }
 
     /* 畫面變暗：所有圖降低亮度 */
-    #wall.dimmed .tile.shown {
+    #wall.dimmed .tile.shown .tile-inner {
       filter: brightness(var(--wall-dim, 0.28)) saturate(0.7);
       transition: filter var(--dim-ms, 900ms) ease;
     }
     /* 被選中的那張：慢慢提高亮度 */
-    #wall.dimmed .tile.spot {
+    #wall.dimmed .tile.spot .tile-inner {
       filter: brightness(1) saturate(1.05);
       transform: scale(1.04);
       transition: filter var(--spot-ms, 1600ms) ease-in-out,
                   transform var(--spot-ms, 1600ms) ease-in-out;
       box-shadow: 0 0 0 2px rgba(255,255,255,0.35), 0 18px 50px rgba(0,0,0,0.75);
-      position: relative; z-index: 3;
     }
+    #wall.dimmed .tile.spot { z-index: 3; }
 
     /* 大圖層 */
     #hero {
@@ -203,7 +214,7 @@
     <div class="slide" id="slideA"><img id="imgA" /></div>
     <div class="slide" id="slideB"><img id="imgB" /></div>
   </div>
-  <div id="wall"></div>
+  <div id="wall"><div id="wallInner"></div></div>
   <div id="hero"><img id="heroImg" /></div>
   <div id="info">
     <div class="name" id="info-name"></div>

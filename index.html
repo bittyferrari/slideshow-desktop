@@ -145,6 +145,20 @@
           <input type="number" id="wallRows" min="1" max="20" step="1" value="6" />
         </div>
       </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <label data-i18n="wall.swap">換圖方式</label>
+        <select id="wallSwapMode">
+          <option value="push" selected data-i18n="swap.push">往上推（移除→下面補位→底部進新圖）</option>
+          <option value="fade" data-i18n="swap.fade">原地淡出淡入</option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.pushMs">往上推的時間</label>
+        <div class="inline">
+          <input type="number" id="wallPush" min="0.1" max="5" step="0.1" value="0.7" />
+          <span data-i18n="unit.seconds">秒</span>
+        </div>
+      </div>
       <div class="field">
         <label data-i18n="wall.stagger">逐張顯示間隔</label>
         <div class="inline">

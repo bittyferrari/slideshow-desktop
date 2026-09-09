@@ -64,6 +64,7 @@ async function restoreSettings() {
   if (typeof s.effect === 'string') el('effect').value = s.effect;
   else if (s.fade === false) el('effect').value = 'none';
   restoreWallFields(s);
+  if (typeof s.wallSwapMode === 'string') el('wallSwapMode').value = s.wallSwapMode;
   toggleWallOpts();
   if (selectedDir) await refreshCount();
 }
@@ -73,6 +74,7 @@ async function restoreSettings() {
 const WALL_FIELDS = [
   ['wallCols', 'wallCols', 0, 1],
   ['wallRows', 'wallRows', 6, 1],
+  ['wallPushMs', 'wallPush', 700, 1000],
   ['wallStaggerMs', 'wallStagger', 60, 1],
   ['wallGap', 'wallGap', 10, 1],
   ['wallRadius', 'wallRadius', 10, 1],
@@ -148,6 +150,7 @@ el('start').addEventListener('click', async () => {
     scaleMode: el('scaleMode').value,
     effect: el('effect').value,
     lang: el('lang').value,
+    wallSwapMode: el('wallSwapMode').value,
     ...collectWallFields(),
   };
   // 儲存設定，下次開啟時還原
