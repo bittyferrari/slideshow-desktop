@@ -122,11 +122,13 @@
     .tile {
       break-inside: avoid; -webkit-column-break-inside: avoid;
       margin-bottom: var(--wall-gap, 10px);
-      border-radius: 10px; overflow: hidden;
+      border-radius: var(--wall-radius, 10px); overflow: hidden;
       background: #111;
       opacity: 0;
       transform: translateY(14px) scale(0.98);
-      transition: opacity 700ms ease, transform 700ms ease, filter 900ms ease;
+      transition: opacity var(--tile-ms, 700ms) ease,
+                  transform var(--tile-ms, 700ms) ease,
+                  filter var(--dim-ms, 900ms) ease;
       will-change: opacity, transform, filter;
     }
     .tile.shown { opacity: 1; transform: translateY(0) scale(1); }
@@ -134,16 +136,15 @@
 
     /* 畫面變暗：所有圖降低亮度 */
     #wall.dimmed .tile.shown {
-      opacity: 0.28;
-      filter: brightness(0.28) saturate(0.7);
-      transition: opacity 900ms ease, filter 900ms ease;
+      filter: brightness(var(--wall-dim, 0.28)) saturate(0.7);
+      transition: filter var(--dim-ms, 900ms) ease;
     }
     /* 被選中的那張：慢慢提高亮度 */
     #wall.dimmed .tile.spot {
-      opacity: 1;
       filter: brightness(1) saturate(1.05);
       transform: scale(1.04);
-      transition: opacity 1600ms ease-in-out, filter 1600ms ease-in-out, transform 1600ms ease-in-out;
+      transition: filter var(--spot-ms, 1600ms) ease-in-out,
+                  transform var(--spot-ms, 1600ms) ease-in-out;
       box-shadow: 0 0 0 2px rgba(255,255,255,0.35), 0 18px 50px rgba(0,0,0,0.75);
       position: relative; z-index: 3;
     }
@@ -153,20 +154,20 @@
       position: fixed; inset: 0; z-index: 6;
       background: rgba(0,0,0,0.94);
       opacity: 0; pointer-events: none;
-      transition: opacity 800ms ease;
+      transition: opacity var(--fly-ms, 900ms) ease;
     }
     #hero.on { opacity: 1; }
     #heroImg {
       position: fixed; object-fit: contain; border-radius: 8px;
       box-shadow: 0 30px 90px rgba(0,0,0,0.8);
-      transition: left 900ms cubic-bezier(.22,.61,.36,1),
-                  top 900ms cubic-bezier(.22,.61,.36,1),
-                  width 900ms cubic-bezier(.22,.61,.36,1),
-                  height 900ms cubic-bezier(.22,.61,.36,1);
+      transition: left var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
+                  top var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
+                  width var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
+                  height var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1);
       user-select: none; -webkit-user-drag: none;
     }
-    #heroImg.breathe { animation: heroBreathe 12s ease-in-out infinite alternate; }
-    @keyframes heroBreathe { from { transform: scale(1); } to { transform: scale(1.05); } }
+    #heroImg.breathe { animation: heroBreathe var(--breathe-ms, 12s) ease-in-out infinite alternate; }
+    @keyframes heroBreathe { from { transform: scale(1); } to { transform: scale(calc(1 + 0.025 * var(--i, 2))); } }
 
     /* 圖片資訊面板（移動滑鼠時顯示）*/
     #info {

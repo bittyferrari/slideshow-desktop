@@ -63,7 +63,54 @@ async function restoreSettings() {
   // 舊設定相容：fade 布林 → effect
   if (typeof s.effect === 'string') el('effect').value = s.effect;
   else if (s.fade === false) el('effect').value = 'none';
+  restoreWallFields(s);
+  toggleWallOpts();
   if (selectedDir) await refreshCount();
+}
+
+// ---- Pinterest 圖牆設定 ----
+// [設定鍵, 輸入框 id, 預設值, 存檔時的換算(倍率)]  倍率 1000 = 秒轉毫秒
+const WALL_FIELDS = [
+  ['wallCols', 'wallCols', 0, 1],
+  ['wallRows', 'wallRows', 6, 1],
+  ['wallGap', 'wallGap', 10, 1],
+  ['wallRadius', 'wallRadius', 10, 1],
+  ['wallHoldMs', 'wallHold', 4000, 1000],
+  ['wallDim', 'wallDim', 28, 1],
+  ['wallDimMs', 'wallDimMs', 900, 1000],
+  ['wallSpotMs', 'wallSpot', 1600, 1000],
+  ['wallFlyMs', 'wallFly', 900, 1000],
+  ['wallBigMs', 'wallBig', 6000, 1000],
+  ['wallBigScale', 'wallBigScale', 86, 1],
+  ['wallSpots', 'wallSpots', 1, 1],
+  ['wallReplacePct', 'wallReplacePct', 60, 1],
+];
+
+// 只有選「Pinterest 圖牆」時才顯示細部設定
+function toggleWallOpts() {
+  el('wallOpts').classList.toggle('on', el('effect').value === 'wall');
+}
+el('effect').addEventListener('change', toggleWallOpts);
+
+function restoreWallFields(s) {
+  for (const [key, id, def, mul] of WALL_FIELDS) {
+    const v = typeof s[key] === 'number' ? s[key] : def;
+    el(id).value = String(mul === 1 ? v : v / mul);
+  }
+}
+
+function collectWallFields() {
+  const out = {};
+  for (const [key, id, def, mul] of WALL_FIELDS) {
+    const input = el(id);
+    let v = parseFloat(input.value);
+    if (!isFinite(v)) v = mul === 1 ? def : def / mul;
+    const min = parseFloat(input.min), max = parseFloat(input.max);
+    if (isFinite(min)) v = Math.max(min, v);
+    if (isFinite(max)) v = Math.min(max, v);
+    out[key] = mul === 1 ? v : Math.round(v * mul);
+  }
+  return out;
 }
 
 async function refreshCount() {
@@ -100,6 +147,7 @@ el('start').addEventListener('click', async () => {
     scaleMode: el('scaleMode').value,
     effect: el('effect').value,
     lang: el('lang').value,
+    ...collectWallFields(),
   };
   // 儲存設定，下次開啟時還原
   await window.api.saveSettings(config);
