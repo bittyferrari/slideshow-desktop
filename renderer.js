@@ -62,8 +62,8 @@ async function restoreSettings() {
   if (typeof s.loop === 'boolean') el('loop').checked = s.loop;
   if (typeof s.scaleMode === 'string') el('scaleMode').value = s.scaleMode;
   // 舊設定相容：fade 布林 → effect
-  if (s.effect === 'wall') {
-    el('mode').value = 'wall';
+  if (s.effect === 'wall' || s.effect === 'reel') {
+    el('mode').value = s.effect;
     el('effect').value = typeof s.slideEffect === 'string' ? s.slideEffect : 'fade';
   } else if (typeof s.effect === 'string') el('effect').value = s.effect;
   else if (s.fade === false) el('effect').value = 'none';
@@ -71,6 +71,13 @@ async function restoreSettings() {
   restoreWallFields(s);
   if (typeof s.wallSwapMode === 'string') el('wallSwapMode').value = s.wallSwapMode;
   if (typeof s.wallBreathe === 'boolean') el('wallBreathe').checked = s.wallBreathe;
+  restoreWallFields(s, REEL_FIELDS);
+  if (typeof s.reelAspect === 'number') {
+    const opt = [...el('reelAspect').options].find((o) => Math.abs(parseFloat(o.value) - s.reelAspect) < 0.01);
+    if (opt) el('reelAspect').value = opt.value;
+  }
+  if (typeof s.reelDir === 'string') el('reelDir').value = s.reelDir;
+  if (typeof s.reelBreathe === 'boolean') el('reelBreathe').checked = s.reelBreathe;
   restoreFx(s);
   toggleEffectOpts();
   if (selectedDir) await refreshCount();
@@ -95,6 +102,26 @@ const WALL_FIELDS = [
   ['wallBigScale', 'wallBigScale', 100, 1],
   ['wallSpots', 'wallSpots', 2, 1],
   ['wallReplacePct', 'wallReplacePct', 80, 1],
+];
+
+// ---- 橫向輪盤設定（格式同上）----
+const REEL_FIELDS = [
+  ['reelCount', 'reelCount', 12, 1],
+  ['reelHeight', 'reelHeight', 50, 1],
+  ['reelGap', 'reelGap', 24, 1],
+  ['reelRadius', 'reelRadius', 16, 1],
+  ['reelSpeed', 'reelSpeed', 2000, 1],
+  ['reelAccelMs', 'reelAccel', 1000, 1000],
+  ['reelSpinMs', 'reelSpin', 3000, 1000],
+  ['reelStopMs', 'reelStop', 3000, 1000],
+  ['reelDim', 'reelDim', 35, 1],
+  ['reelDimMs', 'reelDimMs', 500, 1000],
+  ['reelSpotMs', 'reelSpot', 800, 1000],
+  ['reelFlyMs', 'reelFly', 1000, 1000],
+  ['reelBigMs', 'reelBig', 3000, 1000],
+  ['reelBigScale', 'reelBigScale', 100, 1],
+  ['reelReplacePct', 'reelReplacePct', 50, 1],
+  ['reelThumbScale', 'reelThumbScale', 1, 1],
 ];
 
 
@@ -214,10 +241,11 @@ function collectFx() {
 
 // 只顯示目前選到的效果的設定面板
 function toggleEffectOpts() {
-  const isWall = el('mode').value === 'wall';
+  const mode = el('mode').value;
   const ef = el('effect').value;
-  el('wallOpts').classList.toggle('on', isWall);
-  el('normalOpts').classList.toggle('off', isWall);
+  el('wallOpts').classList.toggle('on', mode === 'wall');
+  el('reelOpts').classList.toggle('on', mode === 'reel');
+  el('normalOpts').classList.toggle('off', mode !== 'normal');
   el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
     w.classList.toggle('on', w.dataset.fx === ef);
   });
@@ -225,16 +253,16 @@ function toggleEffectOpts() {
 el('effect').addEventListener('change', toggleEffectOpts);
 el('mode').addEventListener('change', toggleEffectOpts);
 
-function restoreWallFields(s) {
-  for (const [key, id, def, mul] of WALL_FIELDS) {
+function restoreWallFields(s, fields = WALL_FIELDS) {
+  for (const [key, id, def, mul] of fields) {
     const v = typeof s[key] === 'number' ? s[key] : def;
     el(id).value = String(mul === 1 ? v : v / mul);
   }
 }
 
-function collectWallFields() {
+function collectWallFields(fields = WALL_FIELDS) {
   const out = {};
-  for (const [key, id, def, mul] of WALL_FIELDS) {
+  for (const [key, id, def, mul] of fields) {
     const input = el(id);
     let v = parseFloat(input.value);
     if (!isFinite(v)) v = mul === 1 ? def : def / mul;
@@ -278,13 +306,17 @@ el('start').addEventListener('click', async () => {
     shuffle: el('shuffle').checked,
     loop: el('loop').checked,
     scaleMode: el('scaleMode').value,
-    effect: el('mode').value === 'wall' ? 'wall' : el('effect').value,
+    effect: el('mode').value === 'normal' ? el('effect').value : el('mode').value,
     slideEffect: el('effect').value,
     lang: el('lang').value,
     wallSwapMode: el('wallSwapMode').value,
     wallBreathe: el('wallBreathe').checked,
+    reelAspect: parseFloat(el('reelAspect').value) || 0,
+    reelDir: el('reelDir').value,
+    reelBreathe: el('reelBreathe').checked,
     fx: collectFx(),
     ...collectWallFields(),
+    ...collectWallFields(REEL_FIELDS),
   };
   // 儲存設定，下次開啟時還原
   await window.api.saveSettings(config);

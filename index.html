@@ -53,6 +53,8 @@
     /* 細部設定區塊（僅在選到對應效果時顯示）*/
     #wallOpts { display: none; margin-top: -6px; }
     #wallOpts.on { display: block; }
+    #reelOpts { display: none; margin-top: -6px; }
+    #reelOpts.on { display: block; }
     #normalOpts.off { display: none; }
     #fxOpts { margin-top: -6px; }
     .fxPanel { display: none; margin-bottom: 18px; }
@@ -101,6 +103,7 @@
     <select id="mode">
       <option value="normal" selected data-i18n="mode.normal">一般輪播</option>
       <option value="wall" data-i18n="effect.wall">Pinterest 圖牆（多圖 + 聚焦大圖）</option>
+      <option value="reel" data-i18n="effect.reel">橫向輪盤（平移 → 停在一張放大）</option>
     </select>
   </div>
 
@@ -272,6 +275,149 @@
       </div>
       <div class="hint" data-i18n="wall.perfHint">數字越小越省效能；低階電腦建議 1 或更低。</div>
       <div class="hint" style="margin-bottom:12px" data-i18n="wall.hint">一輪＝變暗 → 聚焦大圖 → 回復亮度 → 換圖。換圖比例越高，一輪過後畫面變化越大。</div>
+    </div>
+  </div>
+
+  <div id="reelOpts">
+    <div class="sub">
+      <div class="title" data-i18n="reel.section">輪盤設定</div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="reel.count"></label>
+        <div class="inline">
+          <input type="number" id="reelCount" min="3" max="60" step="1" value="12" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.height"></label>
+        <div class="inline">
+          <input type="number" id="reelHeight" min="15" max="95" step="5" value="50" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.aspect"></label>
+        <select id="reelAspect">
+          <option value="0.75" selected data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="0" data-i18n="aspect.orig"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.dir"></label>
+        <select id="reelDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.gap"></label>
+        <div class="inline">
+          <input type="number" id="reelGap" min="0" max="100" step="2" value="24" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.radius"></label>
+        <div class="inline">
+          <input type="number" id="reelRadius" min="0" max="60" step="2" value="16" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.speed"></label>
+        <div class="inline">
+          <input type="number" id="reelSpeed" min="100" max="10000" step="100" value="2000" />
+          <span data-i18n="unit.pxs"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.accel"></label>
+        <div class="inline">
+          <input type="number" id="reelAccel" min="0" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.spin"></label>
+        <div class="inline">
+          <input type="number" id="reelSpin" min="0" max="60" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.stop"></label>
+        <div class="inline">
+          <input type="number" id="reelStop" min="0.3" max="20" step="0.1" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.dim"></label>
+        <div class="inline">
+          <input type="number" id="reelDim" min="0" max="100" step="5" value="35" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.dimMs"></label>
+        <div class="inline">
+          <input type="number" id="reelDimMs" min="0.1" max="10" step="0.1" value="0.5" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.spot"></label>
+        <div class="inline">
+          <input type="number" id="reelSpot" min="0.1" max="20" step="0.1" value="0.8" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.fly"></label>
+        <div class="inline">
+          <input type="number" id="reelFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.big"></label>
+        <div class="inline">
+          <input type="number" id="reelBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="reelBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.replace"></label>
+        <div class="inline">
+          <input type="number" id="reelReplacePct" min="0" max="100" step="5" value="50" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.thumb"></label>
+        <div class="inline">
+          <input type="number" id="reelThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="reelBreathe" checked />
+          <label for="reelBreathe" data-i18n="reel.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="reel.hint"></div>
     </div>
   </div>
 
