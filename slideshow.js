@@ -592,46 +592,82 @@ async function replaceTiles(pct) {
   else await replacePush(picks, thumbs);
 }
 
-// ---- 大圖：全程只動 transform（translate + scale），不動版面屬性 ----
-// box：大圖要從哪個元素飛出來（圖牆的磚塊或輪盤的圖）；bigScale：大圖占畫面比例
-function heroOpen(fullImg, box0, bigScale) {
+// ---- 大圖：全程只動 transform（translate + scale）與 clip-path，不動版面屬性 ----
+// 從畫面上那張圖「本身」長大成大圖：
+//   起點＝把大圖等比縮到蓋住那張圖的位置，再用 clip-path 裁成跟它一模一樣的可見範圍（含圓角），
+//   終點＝完整大圖。圖片本身全程不透明，只有背後的黑底淡入 → 看起來就是那張圖被放大。
+// from：大圖要從哪個元素飛出來（取它的實際螢幕矩形，含 scale）；bigScale：大圖占畫面比例；radius：該圖圓角
+const HERO_RADIUS = 8; // 大圖本身的圓角（與 #heroImg 的 border-radius 一致）
+
+// 回傳「縮回 from 元素」時的 transform 與 clip-path
+function heroFromRect(from, dims) {
+  const r = from.getBoundingClientRect();
+  const k = Math.max(r.width / dims.tw, r.height / dims.th);
+  const fx = r.left + (r.width - dims.tw * k) / 2;
+  const fy = r.top + (r.height - dims.th * k) / 2;
+  // clip 用的是 heroBox 自己（縮放前）的座標，所以要除以 k
+  const ix = Math.max(0, (dims.tw - r.width / k) / 2);
+  const iy = Math.max(0, (dims.th - r.height / k) / 2);
+  return {
+    transform: `translate3d(${fx}px, ${fy}px, 0) scale(${k})`,
+    clip: `inset(${iy}px ${ix}px round ${dims.radius / k}px)`,
+  };
+}
+
+const HERO_FULL_CLIP = `inset(0px 0px round ${HERO_RADIUS}px)`;
+
+function heroSet(box, transform, clip, animate) {
+  if (!animate) box.style.transition = 'none';
+  box.style.transform = transform;
+  box.style.clipPath = clip;
+  if (!animate) { void box.offsetWidth; box.style.transition = ''; }
+}
+
+function heroOpen(fullImg, from, bigScale, radius = 0) {
   const hero = el('hero');
   const box = el('heroBox');
   const im = el('heroImg');
 
-  const r = box0.getBoundingClientRect();
   const nw = fullImg.naturalWidth, nh = fullImg.naturalHeight;
   const s = Math.min((window.innerWidth * bigScale) / nw, (window.innerHeight * bigScale) / nh);
   const tw = nw * s, th = nh * s;
   const tx = (window.innerWidth - tw) / 2, ty = (window.innerHeight - th) / 2;
+  const dims = { tw, th, radius };
 
   im.classList.remove('breathe');
   im.src = fullImg.src;
   box.style.width = tw + 'px';
   box.style.height = th + 'px';
 
-  // 起點：把最終大小縮回磚塊的位置與尺寸（等比，所以不會變形）
-  const k = Math.max(r.width / tw, r.height / th);
-  const fx = r.left + (r.width - tw * k) / 2;
-  const fy = r.top + (r.height - th * k) / 2;
-  box.style.transition = 'none';
-  box.style.transform = `translate3d(${fx}px, ${fy}px, 0) scale(${k})`;
-  void box.offsetWidth;
-  box.style.transition = '';
-
-  hero.classList.add('on');
-  box.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(1)`;
-  return { r, tw, th };
+  const f = heroFromRect(from, dims);
+  heroSet(box, f.transform, f.clip, false);   // 起點：跟那張圖完全重疊
+  box.style.visibility = 'visible';
+  hero.classList.add('on');                   // 背後黑底淡入
+  heroSet(box, `translate3d(${tx}px, ${ty}px, 0) scale(1)`, HERO_FULL_CLIP, true);
+  return dims;
 }
 
-function heroClose(box0, dims) {
+// 放大完成後拿掉裁切，呼吸動畫才不會被框住
+function heroSettled() {
+  const box = el('heroBox');
+  box.style.transition = 'none';
+  box.style.clipPath = 'none';
+  void box.offsetWidth;
+  box.style.transition = '';
+}
+
+// 收回後整層藏起來再放掉原圖（空的 <img> 在 Chrome 會畫出外框，會變成畫面上的細線）
+function heroHide() {
+  el('heroBox').style.visibility = 'hidden';
+  el('heroImg').removeAttribute('src');
+}
+
+function heroClose(from, dims) {
   const box = el('heroBox');
   el('heroImg').classList.remove('breathe');
-  const r = box0.getBoundingClientRect();
-  const k = Math.max(r.width / dims.tw, r.height / dims.th);
-  const fx = r.left + (r.width - dims.tw * k) / 2;
-  const fy = r.top + (r.height - dims.th * k) / 2;
-  box.style.transform = `translate3d(${fx}px, ${fy}px, 0) scale(${k})`;
+  heroSet(box, box.style.transform, HERO_FULL_CLIP, false); // 先把裁切接回來（視覺上無變化）
+  const f = heroFromRect(from, dims);
+  heroSet(box, f.transform, f.clip, true);    // 縮回那張圖的位置與形狀
   el('hero').classList.remove('on');
 }
 
@@ -661,18 +697,19 @@ async function spotlightOne() {
 
   if (full) {
     wallHeroImg = full;
-    const dims = heroOpen(full, pick.box, W.bigScale);
+    const dims = heroOpen(full, pick.inner, W.bigScale, W.radius);
     await sleep(W.flyMs);
     if (wallStopped) return;
+    heroSettled();
     // 大圖定住後把整面牆藏起來，這段期間 GPU 只需要處理一張圖
     document.body.classList.add('big');
     if (W.breathe) el('heroImg').classList.add('breathe');
     await sleep(W.bigMs);
     document.body.classList.remove('big');
     if (wallStopped) return;
-    heroClose(pick.box, dims);
+    heroClose(pick.inner, dims);
     await sleep(W.flyMs);
-    el('heroImg').removeAttribute('src'); // 用完就放掉原圖
+    heroHide();
     wallHeroImg = null;
   }
 
@@ -724,11 +761,13 @@ async function wallStart() {
   if (!wallStopped) wallLoop();
 }
 
-// ==================== 橫向輪盤模式（Reel）====================
-// 流程：一排圖片左右排列 → 加速 → 等速平移（無限循環）→ 減速停下，
+// ==================== 輪盤模式（Reel，可水平或垂直）====================
+// 流程：一排圖片左右（或上下）排列 → 加速 → 等速平移（無限循環）→ 減速停下，
 //       停在正中間那張就是選中的 → 其他變暗、選中那張浮起 →
 //       放大成大圖停留 → 收回 → 依比例換掉一部分圖片 → 下一輪。
 //
+// 軸向：水平（向左／向右）時沿 x 排列；垂直（向上／向下）時沿 y 排列。
+//       以下「長度」都是指沿著平移方向（主軸）的長度。
 // 做法：一組 N 張圖排成一條，複製幾份接在後面蓋滿畫面，
 //       位移取「一組總長度」的餘數 → 視覺上無縫循環。
 // 效能：跟圖牆一樣用 <canvas> 縮圖；每一幀只改「整條軌道」一個元素的 transform。
@@ -736,10 +775,10 @@ async function wallStart() {
 //       起始速度＝平移速度）剛好停在它正中間 → 全程速度連續、沒有頓挫。
 let reelMode = false;
 let R = null;           // 輪盤設定
-let reelBase = [];      // 一組圖片：{ path, nw, nh, w, x, canvas(母版), nodes[](各複本 DOM), used }
+let reelBase = [];      // 一組圖片：{ path, nw, nh, w, h, len(主軸長), x(主軸位置), canvas(母版), nodes[], used }
 let reelL = 1;          // 一組圖片的總長度（含間距）＝循環週期
 let reelK = 0;          // 複本份數
-let reelTileH = 0;      // 圖片高度
+let reelCross = 0;      // 圖片在交叉軸的尺寸（水平時＝高、垂直時＝寬）
 let reelO = 0;          // 捲動位移（顯示時取 reelL 的餘數）
 let reelLast = null;    // 上一輪選中的（避免連續選到同一張）
 let reelNeedsRebuild = false;
@@ -749,11 +788,12 @@ const mod = (a, n) => ((a % n) + n) % n;
 function reelSettings() {
   return {
     count: Math.max(3, num(cfg.reelCount, 12)),
-    height: num(cfg.reelHeight, 50) / 100,
+    size: num(cfg.reelHeight, 50) / 100,             // 交叉軸尺寸，占畫面短邊的比例
+    axis: cfg.reelDir === 'up' || cfg.reelDir === 'down' ? 'y' : 'x',
     aspect: num(cfg.reelAspect, 0.75),               // 寬/高，0 = 保留原圖比例
     gap: num(cfg.reelGap, 24),
     radius: num(cfg.reelRadius, 16),
-    dirSign: cfg.reelDir === 'right' ? -1 : 1,        // 向左：位移遞增；向右：位移遞減
+    dirSign: cfg.reelDir === 'right' || cfg.reelDir === 'down' ? -1 : 1, // 向左／上：位移遞增
     speed: Math.max(10, num(cfg.reelSpeed, 2000)),    // px/秒
     accelMs: num(cfg.reelAccelMs, 1000),
     spinMs: num(cfg.reelSpinMs, 3000),
@@ -780,9 +820,18 @@ function applyReelVars() {
   r.setProperty('--breathe-ms', Math.max(4000, R.bigMs * 2) + 'ms');
 }
 
-function reelTileWidth(nw, nh) {
+// 螢幕在主軸方向的長度
+const reelScreen = () => (R.axis === 'y' ? window.innerHeight : window.innerWidth);
+
+// 磚塊尺寸：交叉軸固定為 reelCross，主軸長度依比例（寬/高）決定
+function reelTileSize(nw, nh) {
   const a = R.aspect > 0 ? R.aspect : Math.max(0.4, Math.min(2.5, nw / nh));
-  return Math.max(8, Math.round(reelTileH * a));
+  if (R.axis === 'y') {
+    const w = reelCross, h = Math.max(8, Math.round(reelCross / a));
+    return { w, h, len: h };
+  }
+  const w = Math.max(8, Math.round(reelCross * a)), h = reelCross;
+  return { w, h, len: w };
 }
 
 // 讀原圖 → cover 裁成磚塊比例的 <canvas> 縮圖 → 釋放原圖
@@ -795,7 +844,7 @@ function makeReelThumb(path) {
       try { await img.decode(); } catch { return fail(); }
       const nw = img.naturalWidth, nh = img.naturalHeight;
       if (!nw || !nh) return fail();
-      const w = reelTileWidth(nw, nh), h = reelTileH;
+      const { w, h, len } = reelTileSize(nw, nh);
       const k = (window.devicePixelRatio || 1) * R.thumbScale;
       const pw = Math.max(1, Math.round(w * k)), ph = Math.max(1, Math.round(h * k));
       let sx = 0, sy = 0, sw = nw, sh = nh;
@@ -812,7 +861,7 @@ function makeReelThumb(path) {
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, pw, ph);
       }
       img.src = '';
-      resolve({ path, canvas: cv, nw, nh, w });
+      resolve({ path, canvas: cv, nw, nh, w, h, len });
     };
     img.src = toFileURL(path);
   });
@@ -834,21 +883,22 @@ function freeReelNodes(b) {
   b.nodes = [];
 }
 
-// 排版：一組圖由左到右排好，再複製 reelK 份接在後面
+// 排版：一組圖沿主軸排好，再複製 reelK 份接在後面
 function layoutReel() {
   const track = el('reelTrack');
+  const vert = R.axis === 'y';
   let x = 0;
-  for (const b of reelBase) { b.x = x; x += b.w + R.gap; }
+  for (const b of reelBase) { b.x = x; x += b.len + R.gap; }
   reelL = Math.max(1, x);
-  reelK = Math.ceil(window.innerWidth / reelL) + 1;
+  reelK = Math.ceil(reelScreen() / reelL) + 1;
   for (const b of reelBase) {
     freeReelNodes(b);
     for (let m = 0; m < reelK; m++) {
       const box = document.createElement('div');
       box.className = 'rtile';
-      box.style.left = (m * reelL + b.x) + 'px';
+      box.style[vert ? 'top' : 'left'] = (m * reelL + b.x) + 'px';
       box.style.width = b.w + 'px';
-      box.style.height = reelTileH + 'px';
+      box.style.height = b.h + 'px';
       const inner = document.createElement('div');
       inner.className = 'rtile-inner';
       inner.appendChild(cloneCanvas(b.canvas));
@@ -857,14 +907,18 @@ function layoutReel() {
       b.nodes.push(box);
     }
   }
-  track.style.width = reelK * reelL + 'px';
-  track.style.height = reelTileH + 'px';
-  track.style.top = Math.round((window.innerHeight - reelTileH) / 2) + 'px';
+  // 主軸方向接成一長條，交叉軸置中
+  const main = reelK * reelL + 'px', cross = reelCross + 'px';
+  track.style.width = vert ? cross : main;
+  track.style.height = vert ? main : cross;
+  track.style.left = vert ? Math.round((window.innerWidth - reelCross) / 2) + 'px' : '0px';
+  track.style.top = vert ? '0px' : Math.round((window.innerHeight - reelCross) / 2) + 'px';
   renderReel();
 }
 
 function renderReel() {
-  el('reelTrack').style.transform = `translate3d(${-mod(reelO, reelL)}px, 0, 0)`;
+  const d = -mod(reelO, reelL);
+  el('reelTrack').style.transform = R.axis === 'y' ? `translate3d(0, ${d}px, 0)` : `translate3d(${d}px, 0, 0)`;
 }
 
 // 跑一段位移動畫：dist(t) 回傳開始後 t 毫秒時走了多遠（px）
@@ -888,7 +942,8 @@ async function buildReel() {
   track.classList.add('fade');
   reelBase.forEach((b) => { freeReelNodes(b); b.canvas.width = b.canvas.height = 0; });
   reelBase = [];
-  reelTileH = Math.max(40, Math.round(window.innerHeight * R.height));
+  el('reelTrack').className = R.axis === 'y' ? 'vert fade' : 'fade';
+  reelCross = Math.max(40, Math.round(Math.min(window.innerWidth, window.innerHeight) * R.size));
   const thumbs = await preloadMany(Math.min(R.count, images.length), 3, makeReelThumb);
   if (wallStopped) return false;
   if (thumbs.length === 0) { showMessage(window.I18N.t('msg.noImages')); return false; }
@@ -926,17 +981,18 @@ async function reelSpotlight(b, node) {
 
   if (full) {
     wallHeroImg = full;
-    const dims = heroOpen(full, node, R.bigScale);
+    const dims = heroOpen(full, node.firstChild, R.bigScale, R.radius);
     await sleep(R.flyMs);
     if (wallStopped) return;
+    heroSettled();
     document.body.classList.add('big');
     if (R.breathe) el('heroImg').classList.add('breathe');
     await sleep(R.bigMs);
     document.body.classList.remove('big');
     if (wallStopped) return;
-    heroClose(node, dims);
+    heroClose(node.firstChild, dims);
     await sleep(R.flyMs);
-    el('heroImg').removeAttribute('src');
+    heroHide();
     wallHeroImg = null;
   }
 
@@ -955,11 +1011,11 @@ async function reelReplace() {
   const pairs = picks.slice(0, thumbs.length).map((b, k) => [b, thumbs[k]]);
   const setData = (b, th) => {
     b.canvas.width = b.canvas.height = 0;
-    Object.assign(b, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: th.w, used: false });
+    Object.assign(b, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: th.w, h: th.h, len: th.len, used: false });
   };
 
   if (R.aspect > 0) {
-    // 固定比例：寬度不變 → 原地淡出、換圖、淡入，位置完全不動
+    // 固定比例：主軸長度不變 → 原地淡出、換圖、淡入，位置完全不動
     const step = 60;
     pairs.forEach(([b], k) => setTimeout(() => b.nodes.forEach((nd) => nd.classList.add('swap')), step * k));
     await sleep(step * pairs.length + 450);
@@ -976,7 +1032,7 @@ async function reelReplace() {
     pairs.forEach(([b], k) => setTimeout(() => b.nodes.forEach((nd) => nd.classList.remove('swap')), step * k));
     await sleep(step * pairs.length + 450);
   } else {
-    // 原圖比例：寬度會變 → 整條淡出、重新排版、淡入
+    // 原圖比例：主軸長度會變 → 整條淡出、重新排版、淡入
     const track = el('reelTrack');
     track.classList.add('fade');
     await sleep(450);
@@ -1005,7 +1061,7 @@ async function reelLoop() {
     const b = reelPick();
     const dDec = (v * R.stopMs) / 3;                        // ease-out cubic 起速 v 的減速距離
     const cruise0 = v * R.spinMs;
-    const want = b.x + b.w / 2 - window.innerWidth / 2;     // 停止時位移 ≡ want (mod L)
+    const want = b.x + b.len / 2 - reelScreen() / 2;        // 停止時位移 ≡ want (mod L)
     const C = cruise0 + mod(R.dirSign * (want - reelO) - cruise0 - dDec, reelL);
     if (C > 0) await runMotion(C / v, (t) => v * t);
     if (wallStopped) return;
@@ -1016,7 +1072,7 @@ async function reelLoop() {
     if (wallStopped) return;
 
     // 正中間那一份複本
-    const m = Math.round((window.innerWidth / 2 - b.w / 2 - b.x + mod(reelO, reelL)) / reelL);
+    const m = Math.round((reelScreen() / 2 - b.len / 2 - b.x + mod(reelO, reelL)) / reelL);
     const node = b.nodes[Math.max(0, Math.min(b.nodes.length - 1, m))];
 
     // 4) 放大 → 收回

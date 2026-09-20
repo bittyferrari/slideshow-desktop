@@ -177,16 +177,19 @@
     .tile.spot .tile-veil { transition: opacity var(--spot-ms, 1600ms) ease-in-out; }
 
     /* 大圖層：#heroBox 負責位移縮放（只動 transform），#heroImg 負責呼吸 */
-    #hero {
-      position: fixed; inset: 0; z-index: 6;
+    /* 只有背後的黑底淡入淡出；大圖本身全程不透明，才看得出是「那張圖被放大」*/
+    #hero { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+    #hero::before {
+      content: ''; position: absolute; inset: 0;
       background: rgba(0,0,0,0.96);
-      opacity: 0; pointer-events: none;
-      transition: opacity var(--fly-ms, 900ms) ease;
+      opacity: 0; transition: opacity var(--fly-ms, 900ms) ease;
     }
-    #hero.on { opacity: 1; }
+    #hero.on::before { opacity: 1; }
     #heroBox {
       position: fixed; left: 0; top: 0; transform-origin: 0 0;
-      transition: transform var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1);
+      visibility: hidden; /* 只在放大期間顯示 */
+      transition: transform var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
+                  clip-path var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1);
     }
     #heroImg {
       display: block; width: 100%; height: 100%; object-fit: contain;
@@ -195,8 +198,8 @@
     #heroImg.breathe { animation: heroBreathe var(--breathe-ms, 12s) ease-in-out infinite alternate; }
     @keyframes heroBreathe { from { transform: scale(1); } to { transform: scale(calc(1 + 0.02 * var(--i, 2))); } }
 
-    /* ==================== 橫向輪盤模式 ==================== */
-    /* 一排圖片左右排列、整條軌道平移循環 → 減速停在正中間那張 → 放大。
+    /* ==================== 輪盤模式（水平或垂直）==================== */
+    /* 一排圖片左右（或上下）排列、整條軌道平移循環 → 減速停在正中間那張 → 放大。
        每一幀只改 #reelTrack 的 transform；變暗用軌道內單一黑幕。 */
     #reel { position: fixed; inset: 0; overflow: hidden; background: #000; display: none; }
     body.reel-mode #reel { display: block; }
@@ -222,7 +225,7 @@
     .rtile.swap .rtile-inner { opacity: 0; transform: scale(0.9); }
     /* 停下後其他圖變暗（黑幕在軌道裡，被選中那張 z-index 較高浮在上面）*/
     #reelVeil {
-      position: absolute; left: 0; right: 0; top: -100vh; bottom: -100vh;
+      position: absolute; left: -100vw; right: -100vw; top: -100vh; bottom: -100vh;
       background: #000; z-index: 4; opacity: 0; pointer-events: none;
       transition: opacity var(--dim-ms, 500ms) ease;
     }
