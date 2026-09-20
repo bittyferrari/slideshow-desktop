@@ -12,44 +12,44 @@
       font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
       background: #1e1e24;
       color: #e8e8ec;
-      padding: 24px;
+      padding: 24px 24px 96px;
     }
-    h1 { font-size: 20px; margin: 0 0 20px; font-weight: 600; }
+    h1 { font-size: 22px; margin: 0 0 20px; font-weight: 600; }
     .field { margin-bottom: 18px; }
-    label { display: block; font-size: 13px; margin-bottom: 6px; color: #b8b8c0; }
+    label { display: block; font-size: 14px; margin-bottom: 6px; color: #b8b8c0; }
     .dir-row { display: flex; gap: 8px; }
     input[type="text"], input[type="number"] {
       width: 100%; padding: 9px 11px; border-radius: 8px;
       border: 1px solid #3a3a44; background: #2a2a32; color: #e8e8ec;
-      font-size: 14px;
+      font-size: 15px;
     }
     input[readonly] { color: #9a9aa4; }
     select {
       width: 100%; padding: 9px 11px; border-radius: 8px;
       border: 1px solid #3a3a44; background: #2a2a32; color: #e8e8ec;
-      font-size: 14px;
+      font-size: 15px;
     }
     button {
       border: none; border-radius: 8px; cursor: pointer;
-      font-size: 14px; padding: 9px 16px; font-weight: 500;
+      font-size: 15px; padding: 9px 16px; font-weight: 500;
     }
     .btn-secondary { background: #3a3a44; color: #e8e8ec; white-space: nowrap; }
     .btn-secondary:hover { background: #45454f; }
     .btn-primary {
       background: #5b7cfa; color: #fff; width: 100%;
-      padding: 13px; font-size: 15px; margin-top: 8px;
+      padding: 13px; font-size: 16px;
     }
     .btn-primary:hover { background: #6d8bff; }
     .btn-primary:disabled { background: #3a3a44; color: #777; cursor: not-allowed; }
     .checks { display: flex; flex-direction: column; gap: 10px; }
     .check-row { display: flex; align-items: center; gap: 9px; }
     .check-row input { width: 17px; height: 17px; accent-color: #5b7cfa; }
-    .check-row label { margin: 0; font-size: 14px; color: #e8e8ec; }
-    .hint { font-size: 12px; color: #7a7a84; margin-top: 6px; }
-    .count { font-size: 12px; color: #6ec26e; margin-top: 6px; min-height: 16px; }
+    .check-row label { margin: 0; font-size: 15px; color: #e8e8ec; }
+    .hint { font-size: 13px; color: #7a7a84; margin-top: 6px; }
+    .count { font-size: 13px; color: #6ec26e; margin-top: 6px; min-height: 17px; }
     .inline { display: flex; align-items: center; gap: 8px; }
     .inline input[type="number"] { width: 90px; }
-    .inline span { font-size: 13px; color: #b8b8c0; }
+    .inline span { font-size: 14px; color: #b8b8c0; }
     /* 細部設定區塊（僅在選到對應效果時顯示）*/
     #wallOpts { display: none; margin-top: -6px; }
     #wallOpts.on { display: block; }
@@ -63,11 +63,21 @@
       border: 1px solid #33333d; border-radius: 10px;
       padding: 14px 14px 4px; background: #23232b;
     }
-    .sub .title { font-size: 13px; color: #9aa4c0; margin-bottom: 12px; font-weight: 600; }
+    .sub .title { font-size: 14px; color: #9aa4c0; margin-bottom: 12px; font-weight: 600; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
     .grid2 .field { margin-bottom: 14px; }
-    .grid2 label { font-size: 12px; }
+    .grid2 label { font-size: 13px; }
     .grid2 input[type="number"] { width: 78px; }
+    /* 固定在底部的開始播放列 */
+    .footer {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      padding: 12px 24px 14px;
+      background: rgba(30, 30, 36, 0.96);
+      border-top: 1px solid #33333d;
+      box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.35);
+      z-index: 10;
+    }
+    .footer .hint { display: none; }
   </style>
 </head>
 <body data-i18n-title="window.settings">
@@ -441,8 +451,10 @@
     </div>
   </div>
 
-  <button class="btn-primary" id="start" disabled data-i18n="btn.start">▶ 開始播放</button>
-  <div class="hint" data-i18n="hint.settings">播放時：點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片路徑與資訊。</div>
+  <div class="footer">
+    <button class="btn-primary" id="start" disabled data-i18n="btn.start">▶ 開始播放</button>
+    <div class="hint" data-i18n="hint.settings">播放時：點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片路徑與資訊。</div>
+  </div>
 
   <script src="i18n.js"></script>
   <script src="fx.js"></script>
