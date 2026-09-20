@@ -53,6 +53,7 @@
     /* 細部設定區塊（僅在選到對應效果時顯示）*/
     #wallOpts { display: none; margin-top: -6px; }
     #wallOpts.on { display: block; }
+    #normalOpts.off { display: none; }
     #fxOpts { margin-top: -6px; }
     .fxPanel { display: none; margin-bottom: 18px; }
     .fxPanel.on { display: block; }
@@ -85,14 +86,6 @@
   </div>
 
   <div class="field">
-    <label data-i18n="field.interval">切換間隔</label>
-    <div class="inline">
-      <input type="number" id="interval" min="0.5" step="0.5" value="4" />
-      <span data-i18n="unit.seconds">秒</span>
-    </div>
-  </div>
-
-  <div class="field">
     <label data-i18n="field.scaleMode">縮放模式</label>
     <select id="scaleMode">
       <option value="contain" selected data-i18n="scale.contain">符合畫面（Fit）</option>
@@ -101,6 +94,24 @@
       <option value="none" data-i18n="scale.none">原始大小（置中）</option>
       <option value="scale-down" data-i18n="scale.scale-down">縮小至符合（不放大）</option>
     </select>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.mode">播放模式</label>
+    <select id="mode">
+      <option value="normal" selected data-i18n="mode.normal">一般輪播</option>
+      <option value="wall" data-i18n="effect.wall">Pinterest 圖牆（多圖 + 聚焦大圖）</option>
+    </select>
+  </div>
+
+  <!-- 一般輪播專用：切換間隔、切換效果與其設定 -->
+  <div id="normalOpts">
+  <div class="field">
+    <label data-i18n="field.interval">切換間隔</label>
+    <div class="inline">
+      <input type="number" id="interval" min="0.5" step="0.5" value="4" />
+      <span data-i18n="unit.seconds">秒</span>
+    </div>
   </div>
 
   <div class="field">
@@ -116,7 +127,6 @@
       <option value="drift" data-i18n="effect.drift">漂移（縮放＋微旋轉）</option>
       <option value="crosszoom" data-i18n="effect.crosszoom">交錯縮放</option>
       <option value="focus" data-i18n="effect.focus">對焦（模糊變清晰）</option>
-      <option value="wall" data-i18n="effect.wall">Pinterest 圖牆（多圖 + 聚焦大圖）</option>
       <option value="random" data-i18n="effect.random">隨機</option>
       <option value="none" data-i18n="effect.none">無</option>
     </select>
@@ -124,6 +134,7 @@
 
   <!-- 各切換效果的專屬設定（由 renderer.js 依 fx.js 的定義動態產生，只顯示目前選到的效果）-->
   <div id="fxOpts"></div>
+  </div>
 
   <div id="wallOpts">
     <div class="sub">

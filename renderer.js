@@ -62,8 +62,12 @@ async function restoreSettings() {
   if (typeof s.loop === 'boolean') el('loop').checked = s.loop;
   if (typeof s.scaleMode === 'string') el('scaleMode').value = s.scaleMode;
   // 舊設定相容：fade 布林 → effect
-  if (typeof s.effect === 'string') el('effect').value = s.effect;
+  if (s.effect === 'wall') {
+    el('mode').value = 'wall';
+    el('effect').value = typeof s.slideEffect === 'string' ? s.slideEffect : 'fade';
+  } else if (typeof s.effect === 'string') el('effect').value = s.effect;
   else if (s.fade === false) el('effect').value = 'none';
+  if (!el('effect').value) el('effect').value = 'fade';
   restoreWallFields(s);
   if (typeof s.wallSwapMode === 'string') el('wallSwapMode').value = s.wallSwapMode;
   if (typeof s.wallBreathe === 'boolean') el('wallBreathe').checked = s.wallBreathe;
@@ -210,13 +214,16 @@ function collectFx() {
 
 // 只顯示目前選到的效果的設定面板
 function toggleEffectOpts() {
+  const isWall = el('mode').value === 'wall';
   const ef = el('effect').value;
-  el('wallOpts').classList.toggle('on', ef === 'wall');
+  el('wallOpts').classList.toggle('on', isWall);
+  el('normalOpts').classList.toggle('off', isWall);
   el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
     w.classList.toggle('on', w.dataset.fx === ef);
   });
 }
 el('effect').addEventListener('change', toggleEffectOpts);
+el('mode').addEventListener('change', toggleEffectOpts);
 
 function restoreWallFields(s) {
   for (const [key, id, def, mul] of WALL_FIELDS) {
@@ -271,7 +278,8 @@ el('start').addEventListener('click', async () => {
     shuffle: el('shuffle').checked,
     loop: el('loop').checked,
     scaleMode: el('scaleMode').value,
-    effect: el('effect').value,
+    effect: el('mode').value === 'wall' ? 'wall' : el('effect').value,
+    slideEffect: el('effect').value,
     lang: el('lang').value,
     wallSwapMode: el('wallSwapMode').value,
     wallBreathe: el('wallBreathe').checked,
