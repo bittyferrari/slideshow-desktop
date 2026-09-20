@@ -272,6 +272,7 @@ document.addEventListener('mousemove', (e) => {
 function exitNow(e) {
   if (e) e.preventDefault();
   wallStopped = true;
+  if (typeof reelAnim !== 'undefined' && reelAnim) reelAnim.pause();
   window.api.exitSlideshow();
 }
 document.addEventListener('mousedown', exitNow);
@@ -770,12 +771,14 @@ async function wallStart() {
 //       以下「長度」都是指沿著平移方向（主軸）的長度。
 // 做法：一組 N 張圖排成一條，複製幾份接在後面蓋滿畫面，
 //       位移取「一組總長度」的餘數 → 視覺上無縫循環。
-// 效能：跟圖牆一樣用 <canvas> 縮圖；每一幀只改「整條軌道」一個元素的 transform。
+// 效能：縮圖存成 ImageBitmap，畫面上每塊用 <canvas>；整段平移（加速／等速／減速）
+//       做成一個 Web Animations 動畫交給合成器（compositor）跑，不靠主執行緒的
+//       requestAnimationFrame → 主執行緒偶爾忙碌（GC、解碼…）也不會讓輪盤卡頓。
 // 停準：先決定這輪要停哪張，再微調等速平移的距離，讓減速（ease-out cubic，
 //       起始速度＝平移速度）剛好停在它正中間 → 全程速度連續、沒有頓挫。
 let reelMode = false;
 let R = null;           // 輪盤設定
-let reelBase = [];      // 一組圖片：{ path, nw, nh, w, h, len(主軸長), x(主軸位置), canvas(母版), nodes[], used }
+let reelBase = [];      // 一組圖片：{ path, nw, nh, w, h, len(主軸長), x(主軸位置), bmp(母版 ImageBitmap), nodes[], used }
 let reelL = 1;          // 一組圖片的總長度（含間距）＝循環週期
 let reelK = 0;          // 複本份數
 let reelCross = 0;      // 圖片在交叉軸的尺寸（水平時＝高、垂直時＝寬）
@@ -850,27 +853,29 @@ function makeReelThumb(path) {
       let sx = 0, sy = 0, sw = nw, sh = nh;
       if (nw / nh > w / h) { sw = Math.round(nh * w / h); sx = Math.round((nw - sw) / 2); }
       else { sh = Math.round(nw * h / w); sy = Math.round((nh - sh) / 2); }
-      const cv = document.createElement('canvas');
-      cv.width = pw; cv.height = ph;
-      const ctx = cv.getContext('2d', { alpha: false });
+      let bmp = null;
       try {
-        const bmp = await createImageBitmap(img, sx, sy, sw, sh, { resizeWidth: pw, resizeHeight: ph, resizeQuality: 'high' });
-        ctx.drawImage(bmp, 0, 0);
-        bmp.close();
+        bmp = await createImageBitmap(img, sx, sy, sw, sh, { resizeWidth: pw, resizeHeight: ph, resizeQuality: 'high' });
       } catch {
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, pw, ph);
+        const cv = document.createElement('canvas');
+        cv.width = pw; cv.height = ph;
+        cv.getContext('2d', { alpha: false }).drawImage(img, sx, sy, sw, sh, 0, 0, pw, ph);
+        try { bmp = await createImageBitmap(cv); } catch { bmp = null; }
+        cv.width = cv.height = 0;
       }
       img.src = '';
-      resolve({ path, canvas: cv, nw, nh, w, h, len });
+      if (!bmp) return resolve(null);
+      resolve({ path, bmp, nw, nh, w, h, len });
     };
     img.src = toFileURL(path);
   });
 }
 
-function cloneCanvas(src) {
+// 母版 ImageBitmap → 畫面上用的 <canvas>
+function tileCanvas(bmp) {
   const c = document.createElement('canvas');
-  c.width = src.width; c.height = src.height;
-  c.getContext('2d', { alpha: false }).drawImage(src, 0, 0);
+  c.width = bmp.width; c.height = bmp.height;
+  c.getContext('2d', { alpha: false }).drawImage(bmp, 0, 0);
   return c;
 }
 
@@ -901,7 +906,7 @@ function layoutReel() {
       box.style.height = b.h + 'px';
       const inner = document.createElement('div');
       inner.className = 'rtile-inner';
-      inner.appendChild(cloneCanvas(b.canvas));
+      inner.appendChild(tileCanvas(b.bmp));
       box.appendChild(inner);
       track.appendChild(box);
       b.nodes.push(box);
@@ -921,26 +926,86 @@ function renderReel() {
   el('reelTrack').style.transform = R.axis === 'y' ? `translate3d(0, ${d}px, 0)` : `translate3d(${d}px, 0, 0)`;
 }
 
-// 跑一段位移動畫：dist(t) 回傳開始後 t 毫秒時走了多遠（px）
-function runMotion(ms, dist) {
-  return new Promise((resolve) => {
-    const o0 = reelO, t0 = performance.now();
-    function frame(now) {
-      if (wallStopped) return resolve();
-      const t = Math.min(ms, now - t0);
-      reelO = o0 + R.dirSign * dist(t);
-      renderReel();
-      if (t >= ms) return resolve();
-      requestAnimationFrame(frame);
+// ---- 平移動畫（交給合成器）----
+// 整段運動：加速 A 毫秒（等加速度）→ 等速 Cm 毫秒 → 減速 T 毫秒（ease-out cubic）
+// u(t)＝開始後 t 毫秒走了多遠（px），du(t)＝當下速度（px/ms）。
+function reelMotionPlan(v, A, Cm, T) {
+  const uA = A > 0 ? (v * A) / 2 : 0, uC = v * Cm, dDec = (v * T) / 3;
+  const u = (t) => {
+    if (t <= A) return A > 0 ? (v * t * t) / (2 * A) : 0;
+    if (t <= A + Cm) return uA + v * (t - A);
+    const s = Math.min(1, (t - A - Cm) / T);
+    return uA + uC + dDec * (1 - Math.pow(1 - s, 3));
+  };
+  const du = (t) => {
+    if (t < A) return (v * t) / A;
+    if (t <= A + Cm) return v;
+    const s = Math.min(1, (t - A - Cm) / T);
+    return v * (1 - s) * (1 - s);
+  };
+  return { A, Cm, T, total: A + Cm + T, dist: uA + uC + dDec, u, du };
+}
+
+// 把運動轉成關鍵影格：
+//  - 在「階段交界」和「位移跨過一個週期 reelL（要跳回去）」的時間點切段；
+//  - 每段的位移是時間的 ≤3 次多項式，可以用 cubic-bezier(1/3, y1, 2/3, y2)
+//    精確表示（x 控制點取 1/3、2/3 時 x(t)=t），y1、y2 由兩端速度算出；
+//  - 跨週期處放兩個同 offset 的影格 → 瞬間跳回，視覺上無縫。
+function reelKeyframes(o0, plan) {
+  const { total, u, du, dist } = plan, sgn = R.dirSign, L = reelL, vert = R.axis === 'y';
+  const px = (d) => (Math.abs(d) < 1e-3 ? '0' : d.toFixed(3)); // 避免 1e-13 這種科學記號
+  const tf = (d) => (vert ? `translate3d(0, ${px(d)}px, 0)` : `translate3d(${px(d)}px, 0, 0)`);
+  const timeAt = (target) => { // u 單調遞增 → 二分搜尋
+    let lo = 0, hi = total;
+    for (let k = 0; k < 60; k++) { const mid = (lo + hi) / 2; if (u(mid) < target) lo = mid; else hi = mid; }
+    return (lo + hi) / 2;
+  };
+  const cuts = [0, plan.A, plan.A + plan.Cm, total];
+  const o0m = mod(o0, L);
+  let first = sgn > 0 ? L - o0m : o0m;
+  if (first < 1e-6) first += L;
+  for (let c = first; c < dist - 1e-6; c += L) cuts.push(timeAt(c));
+  cuts.sort((a, b) => a - b);
+
+  const kf = [];
+  let last = 0;
+  const off = (t) => (last = Math.max(last, Math.min(1, t / total)));
+  for (let k = 0; k + 1 < cuts.length; k++) {
+    const ta = cuts[k], tb = cuts[k + 1], dt = tb - ta;
+    if (dt < 1e-3) continue;
+    const pa = o0 + sgn * u(ta), pb = o0 + sgn * u(tb), du_ = u(tb) - u(ta);
+    const base = Math.floor((pa + pb) / 2 / L) * L; // 這一段落在哪個週期
+    let easing = 'linear';
+    if (du_ > 1e-6) {
+      const y1 = (du(ta) * dt) / du_ / 3, y2 = 1 - (du(tb) * dt) / du_ / 3;
+      easing = `cubic-bezier(0.333333, ${y1.toFixed(6)}, 0.666667, ${y2.toFixed(6)})`;
     }
-    requestAnimationFrame(frame);
+    kf.push({ offset: off(ta), transform: tf(-(pa - base)), easing });
+    kf.push({ offset: off(tb), transform: tf(-(pb - base)) });
+  }
+  if (kf.length) kf[kf.length - 1].offset = 1;
+  return kf;
+}
+
+let reelAnim = null;
+function runReelMotion(plan) {
+  const o0 = reelO;
+  const kf = plan.total > 0 ? reelKeyframes(o0, plan) : [];
+  reelO = o0 + R.dirSign * plan.dist;
+  if (kf.length < 2) { renderReel(); return Promise.resolve(); }
+  const anim = el('reelTrack').animate(kf, { duration: plan.total, fill: 'forwards' });
+  reelAnim = anim;
+  return anim.finished.catch(() => {}).then(() => {
+    renderReel();   // 終點寫回 style 再拿掉動畫，畫面不會跳
+    anim.cancel();
+    if (reelAnim === anim) reelAnim = null;
   });
 }
 
 async function buildReel() {
   const track = el('reelTrack');
   track.classList.add('fade');
-  reelBase.forEach((b) => { freeReelNodes(b); b.canvas.width = b.canvas.height = 0; });
+  reelBase.forEach((b) => { freeReelNodes(b); b.bmp.close(); });
   reelBase = [];
   el('reelTrack').className = R.axis === 'y' ? 'vert fade' : 'fade';
   reelCross = Math.max(40, Math.round(Math.min(window.innerWidth, window.innerHeight) * R.size));
@@ -1010,8 +1075,8 @@ async function reelReplace() {
   if (wallStopped || thumbs.length === 0) return;
   const pairs = picks.slice(0, thumbs.length).map((b, k) => [b, thumbs[k]]);
   const setData = (b, th) => {
-    b.canvas.width = b.canvas.height = 0;
-    Object.assign(b, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: th.w, h: th.h, len: th.len, used: false });
+    b.bmp.close();
+    Object.assign(b, { bmp: th.bmp, path: th.path, nw: th.nw, nh: th.nh, w: th.w, h: th.h, len: th.len, used: false });
   };
 
   if (R.aspect > 0) {
@@ -1025,7 +1090,7 @@ async function reelReplace() {
       for (const nd of b.nodes) {
         const inner = nd.firstChild;
         const old = inner.firstChild;
-        inner.replaceChild(cloneCanvas(b.canvas), old);
+        inner.replaceChild(tileCanvas(b.bmp), old);
         old.width = old.height = 0;
       }
     }
@@ -1052,23 +1117,19 @@ async function reelLoop() {
     }
     reelO = mod(reelO, reelL);
     const v = R.speed / 1000; // px/ms
+    const A = Math.max(0, R.accelMs), T = R.stopMs;
 
-    // 1) 加速：速度 0 → v（等加速度）
-    if (R.accelMs > 0) await runMotion(R.accelMs, (t) => (v * t * t) / (2 * R.accelMs));
-    if (wallStopped) return;
-
-    // 2) 等速平移：先選好這輪要停的那張，再把平移距離微調到剛好能停在正中間
+    // 先選好這輪要停的那張，再把等速平移的距離微調到剛好停在正中間：
+    // 加速距離 uA ＋ 等速距離 C ＋ 減速距離 dDec ≡ 目標位移 (mod L)
     const b = reelPick();
-    const dDec = (v * R.stopMs) / 3;                        // ease-out cubic 起速 v 的減速距離
-    const cruise0 = v * R.spinMs;
-    const want = b.x + b.len / 2 - reelScreen() / 2;        // 停止時位移 ≡ want (mod L)
-    const C = cruise0 + mod(R.dirSign * (want - reelO) - cruise0 - dDec, reelL);
-    if (C > 0) await runMotion(C / v, (t) => v * t);
-    if (wallStopped) return;
+    const uA = A > 0 ? (v * A) / 2 : 0;
+    const dDec = (v * T) / 3;                               // ease-out cubic 起速 v 的減速距離
+    const cruise0 = v * Math.max(0, R.spinMs);
+    const want = b.x + b.len / 2 - reelScreen() / 2;
+    const C = cruise0 + mod(R.dirSign * (want - reelO) - uA - cruise0 - dDec, reelL);
 
-    // 3) 減速停下
-    const T = R.stopMs;
-    await runMotion(T, (t) => dDec * (1 - Math.pow(1 - t / T, 3)));
+    // 1)～3) 加速 → 等速 → 減速停下：一個動畫，全程在合成器上跑
+    await runReelMotion(reelMotionPlan(v, A, C / v, T));
     if (wallStopped) return;
 
     // 正中間那一份複本
