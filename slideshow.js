@@ -1563,10 +1563,571 @@ async function cfStart() {
   if (await cfBuild()) cfLoop();
 }
 
+// ==================== 共用：一定拿得到下一張（不循環時也從頭再用）====================
+// 拼貼格、電影膠卷是持續性的畫面，不像一般模式會「播完」，所以圖用完就從頭再來。
+function nextImagePathCycle() {
+  let p = nextImagePath();
+  if (!p && images.length) {
+    idx = 0;
+    if (cfg.shuffle) shuffleArr(images);
+    p = images[idx++];
+  }
+  return p;
+}
+
+async function nextBoxThumbCycle(boxFn, thumbScale) {
+  for (let tries = 0; tries < images.length && !wallStopped; tries++) {
+    const p = nextImagePathCycle();
+    if (!p) return null;
+    const th = await makeBoxThumb(p, boxFn, thumbScale);
+    if (th) return th;
+  }
+  return null;
+}
+
+const KB_ORIGINS = ['20% 20%', '80% 20%', '20% 80%', '80% 80%', '50% 50%'];
+
+// ==================== 拼貼格模式（Collage）====================
+// 流程：隨機挑一個 2～5 格的不對稱雜誌版型 → 每格一張圖、逐格淡入 →
+//       每隔 swapMs 只換「最久沒換」的那一格（新圖層蓋上去做轉場）→
+//       換了 layoutEvery 次之後，整個版型淡出、換一個新版型。
+// 效能：每格最多同時 2 張 <canvas>（轉場中），縮圖直接 cover 裁成格子大小；
+//       轉場只動 transform / opacity / clip-path；慢速縮放是 CSS 動畫。
+let collageMode = false;
+let G = null;
+let ccCells = [];          // { box, inner, layer, canvas, path, nw, nh, w, h, t }
+let ccLayout = null;
+let ccNeedsRebuild = false;
+
+// 版型：每格 [x, y, w, h]（占畫面比例，橫式螢幕用）；直式螢幕自動把 x/y 對調
+const CC_LAYOUTS = {
+  2: [
+    [[0, 0, .6, 1], [.6, 0, .4, 1]],
+    [[0, 0, .4, 1], [.4, 0, .6, 1]],
+    [[0, 0, .5, 1], [.5, 0, .5, 1]],
+  ],
+  3: [
+    [[0, 0, .6, 1], [.6, 0, .4, .5], [.6, .5, .4, .5]],
+    [[0, 0, .4, .5], [0, .5, .4, .5], [.4, 0, .6, 1]],
+    [[0, 0, 1, .58], [0, .58, .5, .42], [.5, .58, .5, .42]],
+    [[0, 0, .3, 1], [.3, 0, .4, 1], [.7, 0, .3, 1]],
+  ],
+  4: [
+    [[0, 0, .5, 1], [.5, 0, .5, .5], [.5, .5, .25, .5], [.75, .5, .25, .5]],
+    [[0, 0, .3, .5], [0, .5, .3, .5], [.3, 0, .4, 1], [.7, 0, .3, 1]],
+    [[0, 0, .62, .55], [.62, 0, .38, .55], [0, .55, .38, .45], [.38, .55, .62, .45]],
+    [[0, 0, .25, 1], [.25, 0, .5, .6], [.25, .6, .5, .4], [.75, 0, .25, 1]],
+  ],
+  5: [
+    [[0, 0, .25, .5], [0, .5, .25, .5], [.25, 0, .5, 1], [.75, 0, .25, .5], [.75, .5, .25, .5]],
+    [[0, 0, .4, .5], [.4, 0, .3, .5], [.7, 0, .3, .5], [0, .5, .55, .5], [.55, .5, .45, .5]],
+    [[0, 0, .6, .65], [.6, 0, .4, .35], [.6, .35, .4, .3], [0, .65, .3, .35], [.3, .65, .7, .35]],
+  ],
+};
+
+function collageSettings() {
+  const mn = Math.max(2, Math.min(5, num(cfg.collageMin, 2)));
+  return {
+    min: mn,                                                   // 最少格數
+    max: Math.max(mn, Math.min(5, num(cfg.collageMax, 5))),    // 最多格數
+    swapMs: Math.max(300, num(cfg.collageSwapMs, 3000)),       // 每隔多久換一格
+    transMs: num(cfg.collageTransMs, 900),                     // 單格轉場時間
+    trans: cfg.collageTrans || 'random',                       // fade / slide / zoom / wipe / random / none
+    layoutEvery: Math.max(0, num(cfg.collageLayoutEvery, 8)),  // 換幾次後換版型，0 = 不換
+    gap: num(cfg.collageGap, 12),
+    radius: num(cfg.collageRadius, 12),
+    kb: cfg.collageKb !== false,                               // 每格緩慢縮放
+    thumbScale: num(cfg.collageThumbScale, 1),
+  };
+}
+
+// 版型比例 → 實際像素矩形（外框與格間都留 gap）
+function ccRects(layout) {
+  const W = window.innerWidth, H = window.innerHeight, g = G.gap;
+  const tr = H > W;
+  return layout.map(([x, y, w, h]) => {
+    if (tr) [x, y, w, h] = [y, x, h, w];
+    const L = Math.round(x * (W - g) + g), T = Math.round(y * (H - g) + g);
+    const R = Math.round((x + w) * (W - g)), B = Math.round((y + h) * (H - g));
+    return { x: L, y: T, w: Math.max(8, R - L), h: Math.max(8, B - T) };
+  });
+}
+
+function ccPickLayout() {
+  const n = G.min + Math.floor(Math.random() * (G.max - G.min + 1));
+  const list = CC_LAYOUTS[n];
+  let pick = rand(list);
+  if (list.length > 1) while (pick === ccLayout) pick = rand(list);
+  ccLayout = pick;
+  return pick;
+}
+
+function ccLayer(th) {
+  const layer = document.createElement('div');
+  layer.className = 'clayer';
+  if (G.kb) {
+    th.canvas.classList.add('kb');
+    th.canvas.style.transformOrigin = rand(KB_ORIGINS);
+    th.canvas.style.animationDelay = -(Math.random() * 20).toFixed(1) + 's';
+  }
+  layer.appendChild(th.canvas);
+  return layer;
+}
+
+function ccSetData(cell, th) {
+  Object.assign(cell, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, t: performance.now() });
+  current = { path: th.path, index: 0, nw: th.nw, nh: th.nh };
+  if (infoVisible) updateInfo();
+}
+
+function ccClear() {
+  for (const c of ccCells) {
+    c.box.querySelectorAll('canvas').forEach(freeCanvas);
+    c.box.remove();
+  }
+  ccCells = [];
+}
+
+async function ccBuild() {
+  const host = el('collageBox');
+  if (ccCells.length) {
+    host.classList.add('fade');
+    await sleep(600);
+    if (wallStopped) return false;
+  }
+  ccClear();
+  host.classList.remove('fade');
+  const rects = ccRects(ccPickLayout());
+  const made = [];
+  for (const r of rects) {
+    const th = await nextBoxThumbCycle(() => ({ w: r.w, h: r.h }), G.thumbScale);
+    if (wallStopped) return false;
+    if (!th) break;
+    const box = document.createElement('div');
+    box.className = 'ccell';
+    Object.assign(box.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+    const inner = document.createElement('div');
+    inner.className = 'ccell-inner';
+    const layer = ccLayer(th);
+    inner.appendChild(layer);
+    box.appendChild(inner);
+    host.appendChild(box);
+    const cell = { box, inner, layer, w: r.w, h: r.h };
+    ccSetData(cell, th);
+    cell.t += Math.random(); // 同時建立的格子，換圖順序隨機
+    ccCells.push(cell);
+    made.push(cell);
+  }
+  if (made.length === 0) { showMessage(window.I18N.t('msg.noImages')); return false; }
+  made.forEach((c, i) => setTimeout(() => c.box.classList.add('shown'), 140 * i));
+  await sleep(140 * made.length + 600);
+  return true;
+}
+
+// 換一格：新圖層蓋上去做轉場 → 拿掉舊圖層
+async function ccSwap(cell, th) {
+  const layer = ccLayer(th);
+  const old = cell.layer;
+  cell.inner.appendChild(layer);
+  const ef = G.trans === 'random' ? rand(['fade', 'slide', 'zoom', 'wipe']) : G.trans;
+  const opt = { duration: Math.max(1, G.transMs), easing: 'cubic-bezier(.4,0,.2,1)' };
+  let a = null;
+  if (ef === 'slide') {
+    const [dx, dy] = rand([[100, 0], [-100, 0], [0, 100], [0, -100]]);
+    a = layer.animate([{ transform: `translate(${dx}%, ${dy}%)` }, { transform: 'translate(0, 0)' }], opt);
+    old.animate([{ transform: 'translate(0, 0)' }, { transform: `translate(${-dx}%, ${-dy}%)` }], { ...opt, fill: 'forwards' });
+  } else if (ef === 'zoom') {
+    a = layer.animate([{ transform: 'scale(1.25)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], opt);
+  } else if (ef === 'wipe') {
+    const from = rand(['0 100% 0 0', '0 0 0 100%', '100% 0 0 0', '0 0 100% 0']);
+    a = layer.animate([{ clipPath: `inset(${from})` }, { clipPath: 'inset(0 0 0 0)' }], opt);
+  } else if (ef !== 'none') {
+    a = layer.animate([{ opacity: 0 }, { opacity: 1 }], opt);
+  }
+  cell.layer = layer;
+  ccSetData(cell, th);
+  if (a) await a.finished.catch(() => {});
+  old.querySelectorAll('canvas').forEach(freeCanvas);
+  old.remove();
+}
+
+async function ccLoop() {
+  let swaps = 0;
+  while (!wallStopped) {
+    if (ccNeedsRebuild || (G.layoutEvery > 0 && swaps >= G.layoutEvery)) {
+      if (!ccNeedsRebuild) await sleep(G.swapMs);
+      ccNeedsRebuild = false;
+      swaps = 0;
+      if (wallStopped || !(await ccBuild())) return;
+      continue;
+    }
+    // 最久沒換的那格（建立時已加上隨機小數，所以初始順序是亂的）
+    const cell = ccCells.reduce((a, b) => (b.t < a.t ? b : a));
+    const [th] = await Promise.all([
+      nextBoxThumbCycle(() => ({ w: cell.w, h: cell.h }), G.thumbScale),
+      sleep(G.swapMs),
+    ]);
+    if (wallStopped) return;
+    if (ccNeedsRebuild || !cell.box.isConnected) { if (th) freeCanvas(th.canvas); continue; }
+    if (th) await ccSwap(cell, th);
+    swaps++;
+  }
+}
+
+async function collageStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  collageMode = true;
+  wallStopped = false;
+  G = collageSettings();
+  const r = document.documentElement.style;
+  r.setProperty('--cc-radius', G.radius + 'px');
+  r.setProperty('--cc-kb-ms', Math.max(12000, G.swapMs * 6) + 'ms');
+  document.body.classList.add('collage-mode');
+  if (await ccBuild()) ccLoop();
+}
+
+// ==================== 電影膠卷模式（Filmstrip）====================
+// 流程：一條帶齒孔的底片橫向等速慢慢捲動（無限）→ 每隔 bigEveryMs，底片慢慢停下，
+//       最靠近畫面中央那格放大成大圖（同一套 hero）→ 停留 → 收回 → 底片再慢慢開始走。
+// 做法：每格寬度固定 fw，第 k 格放在 x = k·fw；整條底片只有 #filmTrack 一個 transform。
+//       平移是一個很長的 Web Animations 動畫（交給合成器，主執行緒忙也不卡）；
+//       另有一個每 250ms 的維護計時器：畫面外快要進來的格子先建好、離開的格子移除。
+// 每格：一張 canvas，底片底色、齒孔、格線、編號跟照片（含復古色調）一次畫好，之後不再重繪。
+let filmMode = false;
+let F = null;
+let filmFrames = new Map();  // k → { node, canvas, hole, path, nw, nh, loaded }
+let filmGeo = null;          // { H, b, ih, iw, div, fw, k }
+let filmBlank = null;        // 沒有照片的空白底片格（每格先複製這張）
+let filmAnim = null;
+let filmSegO = 0;            // 目前這段動畫開始時的位移
+let filmQueue = [];
+let filmLoading = false;
+let filmTimer = null;
+let filmBusy = false;        // 放大期間
+
+function filmSettings() {
+  return {
+    size: num(cfg.filmSize, 45) / 100,                 // 底片高度占畫面高
+    aspect: num(cfg.filmAspect, 1.5),                  // 每格照片寬/高
+    speed: Math.max(5, num(cfg.filmSpeed, 60)),        // px/秒
+    dirSign: cfg.filmDir === 'right' ? -1 : 1,         // 1：往左捲
+    tilt: num(cfg.filmTilt, 0),                        // 底片傾斜角度
+    bigEveryMs: num(cfg.filmBigEveryMs, 12000),        // 每隔多久放大一格，0 = 不放大
+    bigMs: num(cfg.filmBigMs, 3000),
+    flyMs: num(cfg.filmFlyMs, 1000),
+    bigScale: num(cfg.filmBigScale, 100) / 100,
+    tone: cfg.filmTone || 'none',                      // none / sepia / bw
+    grain: cfg.filmGrain !== false,                    // 顆粒＋閃爍
+    shake: cfg.filmShake !== false,                    // 輕微晃動
+    breathe: cfg.filmBreathe !== false,
+    thumbScale: num(cfg.filmThumbScale, 1),
+  };
+}
+
+const FILM_TONE = { sepia: 'sepia(0.65) contrast(1.05)', bw: 'grayscale(1) contrast(1.08)' };
+
+function filmGeometry() {
+  const H = Math.max(60, Math.round(window.innerHeight * F.size));
+  const b = Math.round(H * 0.13);                     // 上下齒孔帶
+  const ih = H - b * 2;
+  const iw = Math.round(ih * F.aspect);
+  const div = Math.max(2, Math.round(H * 0.045));     // 格與格之間的黑線
+  return { H, b, ih, iw, div, fw: iw + div, k: (window.devicePixelRatio || 1) * F.thumbScale };
+}
+
+// 空白底片格：底色、照片區（暗）、齒孔
+function filmMakeBlank() {
+  const { H, b, ih, iw, div, fw, k } = filmGeo;
+  const c = document.createElement('canvas');
+  c.width = Math.round(fw * k); c.height = Math.round(H * k);
+  const ctx = c.getContext('2d', { alpha: false });
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.fillStyle = '#17120d';
+  ctx.fillRect(0, 0, fw, H);
+  ctx.fillStyle = '#060504';
+  ctx.fillRect(div / 2, b, iw, ih);
+  const n = Math.max(3, Math.round(fw / (H * 0.105)));
+  const pitch = fw / n, hw = pitch * 0.52, hh = b * 0.42, r = Math.min(hw, hh) * 0.22;
+  ctx.fillStyle = '#e6e0d2';
+  for (let i = 0; i < n; i++) {
+    const x = i * pitch + (pitch - hw) / 2;
+    for (const y of [(b - hh) / 2, H - b + (b - hh) / 2]) {
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, y, hw, hh, r); else ctx.rect(x, y, hw, hh);
+      ctx.fill();
+    }
+  }
+  return c;
+}
+
+// 底片邊緣的格號（畫在下緣齒孔外側那一條）
+function filmLabel(ctx, kIdx) {
+  const { H, b, k } = filmGeo;
+  const edge = (b - b * 0.42) / 2;
+  const fs = Math.max(7, edge * 0.7);
+  const no = mod(kIdx, 36) + 1;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.fillStyle = 'rgba(232,165,70,0.7)';
+  ctx.font = `600 ${fs.toFixed(1)}px Consolas, "Courier New", monospace`;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${no}   ▸ ${no}A`, filmGeo.div / 2 + fs * 0.6, H - edge / 2);
+}
+
+function filmMakeFrame(kIdx) {
+  const { H, b, ih, iw, div, fw } = filmGeo;
+  const node = document.createElement('div');
+  node.className = 'fframe';
+  Object.assign(node.style, { left: kIdx * fw + 'px', width: fw + 'px', height: H + 'px' });
+  const cv = document.createElement('canvas');
+  cv.width = filmBlank.width; cv.height = filmBlank.height;
+  const ctx = cv.getContext('2d', { alpha: false });
+  ctx.drawImage(filmBlank, 0, 0);
+  filmLabel(ctx, kIdx);
+  // 照片區的位置（hero 放大／收回時用它的螢幕矩形）
+  const hole = document.createElement('div');
+  hole.className = 'fhole';
+  Object.assign(hole.style, { left: div / 2 + 'px', top: b + 'px', width: iw + 'px', height: ih + 'px' });
+  node.appendChild(cv);
+  node.appendChild(hole);
+  el('filmTrack').appendChild(node);
+  const fr = { node, canvas: cv, hole, path: null, nw: 0, nh: 0, loaded: false };
+  filmFrames.set(kIdx, fr);
+  filmQueue.push(fr);
+  filmPump();
+  return fr;
+}
+
+// 把照片畫進底片格（cover 裁切＋色調），原圖用完即釋放
+async function filmPaint(fr, path) {
+  const img = await loadFull(path);
+  if (!img) return false;
+  const { b, ih, iw, div, k } = filmGeo;
+  const nw = img.naturalWidth, nh = img.naturalHeight;
+  let sx = 0, sy = 0, sw = nw, sh = nh;
+  if (nw / nh > iw / ih) { sw = Math.round(nh * iw / ih); sx = Math.round((nw - sw) / 2); }
+  else { sh = Math.round(nw * ih / iw); sy = Math.round((nh - sh) / 2); }
+  const pw = Math.max(1, Math.round(iw * k)), ph = Math.max(1, Math.round(ih * k));
+  let bmp = null;
+  try { bmp = await createImageBitmap(img, sx, sy, sw, sh, { resizeWidth: pw, resizeHeight: ph, resizeQuality: 'high' }); } catch { bmp = null; }
+  if (!fr.node.isConnected || !fr.canvas.width) { if (bmp) bmp.close(); img.src = ''; return true; }
+  const ctx = fr.canvas.getContext('2d', { alpha: false });
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.filter = FILM_TONE[F.tone] || 'none';
+  const dx = Math.round(div / 2 * k), dy = Math.round(b * k);
+  if (bmp) { ctx.drawImage(bmp, dx, dy, pw, ph); bmp.close(); }
+  else ctx.drawImage(img, sx, sy, sw, sh, dx, dy, pw, ph);
+  ctx.filter = 'none';
+  img.src = '';
+  Object.assign(fr, { path, nw, nh, loaded: true });
+  return true;
+}
+
+// 依序（一次一張）把排隊的格子補上照片，避免一次解碼太多張吃滿 CPU
+async function filmPump() {
+  if (filmLoading) return;
+  filmLoading = true;
+  while (filmQueue.length && !wallStopped) {
+    const fr = filmQueue.shift();
+    if (!fr.node.isConnected) continue;
+    for (let tries = 0; tries < images.length && !wallStopped; tries++) {
+      const p = nextImagePathCycle();
+      if (!p) break;
+      if (await filmPaint(fr, p)) break;
+    }
+  }
+  filmLoading = false;
+}
+
+// 目前位移（track 座標中，畫面左緣的位置）
+function filmOffset() {
+  const t = filmAnim ? (filmAnim.currentTime || 0) : 0;
+  return filmSegO + F.dirSign * (F.speed / 1000) * t;
+}
+
+const filmTx = (o) => `translate3d(${(-o).toFixed(2)}px, 0, 0)`;
+
+// 從目前位置開始一段很長（10 分鐘）的等速動畫；結束時無縫接下一段
+function filmRun() {
+  const o0 = filmOffset();
+  if (filmAnim) filmAnim.cancel();
+  filmSegO = o0;
+  const dur = 600000;
+  const track = el('filmTrack');
+  track.style.transform = filmTx(o0);
+  const a = track.animate(
+    [{ transform: filmTx(o0) }, { transform: filmTx(o0 + F.dirSign * (F.speed / 1000) * dur) }],
+    { duration: dur, easing: 'linear', fill: 'forwards' });
+  filmAnim = a;
+  a.finished.then(() => { if (!wallStopped && filmAnim === a) filmRun(); }).catch(() => {});
+}
+
+// 畫面附近需要的格子補齊、遠離的移除；順便更新資訊面板的「目前這張」
+function filmMaintain() {
+  if (!filmGeo || wallStopped) return;
+  const fw = filmGeo.fw;
+  const o = filmOffset();
+  const span = Math.hypot(window.innerWidth, window.innerHeight); // 傾斜時也蓋得滿
+  const cx = o + window.innerWidth / 2;
+  const k0 = Math.floor((cx - span / 2) / fw) - 1, k1 = Math.ceil((cx + span / 2) / fw) + 1;
+  const ks = [];
+  for (let k = k0; k <= k1; k++) ks.push(k);
+  if (F.dirSign < 0) ks.reverse(); // 往右捲時新格子從左邊進來，先補左邊
+  for (const k of ks) if (!filmFrames.has(k)) filmMakeFrame(k);
+  for (const [k, fr] of filmFrames) {
+    if (k < k0 - 1 || k > k1 + 1) {
+      freeCanvas(fr.canvas);
+      fr.node.remove();
+      filmFrames.delete(k);
+    }
+  }
+  if (!filmBusy) {
+    const fr = filmFrames.get(Math.floor(cx / fw));
+    if (fr && fr.loaded && (!current || current.path !== fr.path)) {
+      current = { path: fr.path, index: 0, nw: fr.nw, nh: fr.nh };
+      if (infoVisible) updateInfo();
+    }
+  }
+}
+
+function filmClear() {
+  for (const fr of filmFrames.values()) { freeCanvas(fr.canvas); fr.node.remove(); }
+  filmFrames.clear();
+  filmQueue = [];
+}
+
+function filmBuild() {
+  filmClear();
+  if (filmBlank) freeCanvas(filmBlank);
+  filmGeo = filmGeometry();
+  filmBlank = filmMakeBlank();
+  const wrap = el('filmWrap');
+  wrap.style.height = filmGeo.H + 'px';
+  wrap.style.marginTop = -filmGeo.H / 2 + 'px';
+  wrap.style.transform = F.tilt ? `rotate(${F.tilt}deg)` : '';
+  wrap.classList.toggle('shake', F.shake);
+  el('filmTrack').style.height = filmGeo.H + 'px';
+  filmMaintain();
+}
+
+// 顆粒：一張低解析度雜訊 canvas 放大兩倍，用 steps 動畫跳位置（不重繪）
+function filmGrainInit() {
+  const fx = el('filmFx');
+  fx.classList.toggle('grain', F.grain);
+  fx.classList.toggle('flicker', F.grain);
+  if (!F.grain) return;
+  const c = el('filmGrain');
+  const w = Math.ceil(window.innerWidth / 2) + 64, h = Math.ceil(window.innerHeight / 2) + 64;
+  c.width = w; c.height = h;
+  c.style.width = w + 'px'; c.style.height = h + 'px';
+  c.style.transform = 'scale(2)';
+  const ctx = c.getContext('2d');
+  const id = ctx.createImageData(w, h);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const v = Math.random() * 255;
+    id.data[i] = id.data[i + 1] = id.data[i + 2] = v;
+    id.data[i + 3] = 255;
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+// 平滑改變速度（playbackRate 從 a 漸變到 b）
+async function filmRamp(from, to, ms) {
+  const steps = Math.max(1, Math.round(ms / 40));
+  for (let i = 1; i <= steps && !wallStopped; i++) {
+    const s = i / steps;
+    const r = from + (to - from) * (1 - Math.pow(1 - s, 2));
+    if (filmAnim) filmAnim.updatePlaybackRate(Math.max(0.001, r));
+    await sleep(ms / steps);
+  }
+}
+
+async function filmSpotlight() {
+  const cxs = window.innerWidth / 2, cys = window.innerHeight / 2;
+  // 減速停下
+  filmBusy = true;
+  await filmRamp(1, 0, 900);
+  if (filmAnim) filmAnim.pause();
+  if (wallStopped) return;
+  // 最靠近畫面中央、完整在畫面內、已畫好照片的那格
+  let best = null, bd = Infinity;
+  for (const fr of filmFrames.values()) {
+    if (!fr.loaded) continue;
+    const r = fr.hole.getBoundingClientRect();
+    if (r.left < 0 || r.right > window.innerWidth) continue;
+    const d = Math.hypot(r.left + r.width / 2 - cxs, r.top + r.height / 2 - cys);
+    if (d < bd) { bd = d; best = fr; }
+  }
+  if (best) {
+    current = { path: best.path, index: 0, nw: best.nw, nh: best.nh };
+    if (infoVisible) updateInfo();
+    const full = await loadFull(best.path);
+    if (wallStopped) return;
+    if (full) {
+      wallHeroImg = full;
+      const dims = heroOpen(full, best.hole, F.bigScale, 2);
+      await sleep(F.flyMs);
+      if (wallStopped) return;
+      heroSettled();
+      document.body.classList.add('big');
+      if (F.breathe) el('heroImg').classList.add('breathe');
+      await sleep(F.bigMs);
+      document.body.classList.remove('big');
+      if (wallStopped) return;
+      heroClose(best.hole, dims);
+      await sleep(F.flyMs);
+      heroHide();
+      wallHeroImg = null;
+    }
+  }
+  // 再慢慢開始走
+  if (filmAnim) { filmAnim.updatePlaybackRate(0.001); filmAnim.play(); }
+  await filmRamp(0, 1, 1200);
+  filmBusy = false;
+}
+
+async function filmLoop() {
+  while (!wallStopped) {
+    if (F.bigEveryMs <= 0) return; // 不放大：只剩捲動與維護計時器
+    await sleep(F.bigEveryMs);
+    if (wallStopped) return;
+    await filmSpotlight();
+  }
+}
+
+function filmStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  filmMode = true;
+  wallStopped = false;
+  F = filmSettings();
+  const r = document.documentElement.style;
+  r.setProperty('--fly-ms', F.flyMs + 'ms');
+  r.setProperty('--breathe-ms', Math.max(4000, F.bigMs * 2) + 'ms');
+  el('heroImg').classList.toggle('tone-sepia', F.tone === 'sepia');
+  el('heroImg').classList.toggle('tone-bw', F.tone === 'bw');
+  document.body.classList.add('film-mode');
+  filmGrainInit();
+  filmSegO = 0;
+  filmBuild();
+  filmRun();
+  filmTimer = setInterval(filmMaintain, 250);
+  filmLoop();
+}
+
 // 視窗大小改變時重建圖牆（欄寬變了，高度要重算）；輪盤則在下一輪開始前重建
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   if (cfMode) { cfNeedsRebuild = true; return; }
+  if (collageMode) { ccNeedsRebuild = true; return; }
+  if (filmMode) {
+    // 放大期間先不動，等收回後的下一次 resize 或下一輪再重建
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (wallStopped || filmBusy) return;
+      filmGrainInit();
+      filmBuild();
+    }, 400);
+    return;
+  }
   if (reelMode) { reelNeedsRebuild = true; return; }
   if (!wallMode) return;
   clearTimeout(resizeTimer);
@@ -1597,5 +2158,7 @@ window.api.onConfig(async (config) => {
   else if (cfg.effect === 'reel') reelStart();
   else if (cfg.effect === 'polaroid') polaStart();
   else if (cfg.effect === 'coverflow') cfStart();
+  else if (cfg.effect === 'collage') collageStart();
+  else if (cfg.effect === 'filmstrip') filmStart();
   else start();
 });

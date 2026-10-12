@@ -299,6 +299,57 @@
       transition: opacity var(--cf-move-ms, 800ms) ease;
     }
 
+    /* ==================== 拼貼格模式 ==================== */
+    /* 2～5 格不對稱版型；每隔幾秒只換其中一格（新圖層蓋上去做轉場），版型定期整個換掉。
+       每格：.ccell（定位）→ .ccell-inner（裁切＋圓角）→ .clayer（轉場用）→ canvas（慢速縮放用）。 */
+    #collage { position: fixed; inset: 0; overflow: hidden; display: none; background: #000; }
+    body.collage-mode #collage { display: block; }
+    body.collage-mode #stage { display: none; }
+    #collageBox { position: absolute; inset: 0; transition: opacity 600ms ease; }
+    #collageBox.fade { opacity: 0; }
+    .ccell { position: absolute; opacity: 0; transform: scale(0.97); transition: opacity 600ms ease, transform 600ms ease; }
+    .ccell.shown { opacity: 1; transform: none; }
+    .ccell-inner { position: absolute; inset: 0; overflow: hidden; border-radius: var(--cc-radius, 12px); background: #111; }
+    .clayer { position: absolute; inset: 0; overflow: hidden; }
+    .clayer canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .clayer canvas.kb { animation: ccKb var(--cc-kb-ms, 24s) ease-in-out infinite alternate; }
+    @keyframes ccKb { from { transform: scale(1); } to { transform: scale(1.08); } }
+
+    /* ==================== 電影膠卷模式 ==================== */
+    /* 底片（含齒孔、格線、編號）每格預先畫進一張 canvas；整條只動 #filmTrack 的 transform
+       （Web Animations，交給合成器）。顆粒、晃動、暗角都是獨立的合成層動畫，不重繪。 */
+    #film { position: fixed; inset: 0; overflow: hidden; display: none; background: #0b0a09; }
+    body.film-mode #film { display: block; }
+    body.film-mode #stage { display: none; }
+    body.big #film { visibility: hidden; }
+    #filmWrap { position: absolute; left: 0; right: 0; top: 50%; }
+    #filmWrap.shake { animation: filmShake 0.5s steps(1) infinite; }
+    @keyframes filmShake {
+      0% { translate: 0 0; } 20% { translate: 0.6px -1px; } 40% { translate: -0.5px 0.8px; }
+      60% { translate: 0.3px 0.3px; } 80% { translate: -0.7px -0.6px; }
+    }
+    #filmTrack { position: absolute; left: 0; top: 0; will-change: transform; }
+    .fframe { position: absolute; top: 0; }
+    .fframe canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .fframe .fhole { position: absolute; pointer-events: none; }
+    #filmFx { position: fixed; inset: 0; pointer-events: none; z-index: 7; display: none; overflow: hidden; }
+    body.film-mode #filmFx { display: block; }
+    #filmFx .vig { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.55) 100%); }
+    #filmFx.flicker .vig { animation: filmFlicker 0.27s steps(1) infinite; }
+    @keyframes filmFlicker { 0% { opacity: 1; } 33% { opacity: 0.86; } 66% { opacity: 0.95; } }
+    #filmGrain {
+      position: absolute; left: -64px; top: -64px; transform-origin: 0 0;
+      image-rendering: pixelated; opacity: 0.09; display: none;
+      animation: filmGrainMove 0.6s steps(1) infinite;
+    }
+    #filmFx.grain #filmGrain { display: block; }
+    @keyframes filmGrainMove {
+      0% { translate: 0 0; } 17% { translate: -23px 11px; } 33% { translate: 14px -19px; }
+      50% { translate: -9px -31px; } 67% { translate: 27px 7px; } 83% { translate: -17px 25px; }
+    }
+    #heroImg.tone-sepia { filter: sepia(0.65) contrast(1.05); }
+    #heroImg.tone-bw { filter: grayscale(1) contrast(1.08); }
+
     /* 圖片資訊面板（移動滑鼠時顯示）*/
     #info {
       position: fixed; left: 24px; bottom: 24px; max-width: 70vw; z-index: 10;
@@ -335,6 +386,9 @@
   <div id="reel"><div id="reelTrack"><div id="reelVeil"></div></div></div>
   <div id="pola"><div id="polaPile"></div></div>
   <div id="cf"><div id="cfStage"></div></div>
+  <div id="collage"><div id="collageBox"></div></div>
+  <div id="film"><div id="filmWrap"><div id="filmTrack"></div></div></div>
+  <div id="filmFx"><canvas id="filmGrain"></canvas><div class="vig"></div></div>
   <div id="dimVeil"></div>
   <div id="hero"><div id="heroBox"><img id="heroImg" /></div></div>
   <div id="info">

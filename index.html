@@ -57,6 +57,8 @@
     #reelOpts.on { display: block; }
     #polaOpts, #cfOpts { display: none; margin-top: -6px; }
     #polaOpts.on, #cfOpts.on { display: block; }
+    #collageOpts, #filmOpts { display: none; margin-top: -6px; }
+    #collageOpts.on, #filmOpts.on { display: block; }
     #normalOpts.off { display: none; }
     #fxOpts { margin-top: -6px; }
     .fxPanel { display: none; margin-bottom: 18px; }
@@ -118,6 +120,8 @@
       <option value="reel" data-i18n="effect.reel">輪盤（平移 → 停在一張放大）</option>
       <option value="polaroid" data-i18n="effect.polaroid">拍立得散落</option>
       <option value="coverflow" data-i18n="effect.coverflow">3D 封面流</option>
+      <option value="collage" data-i18n="effect.collage">拼貼格</option>
+      <option value="filmstrip" data-i18n="effect.filmstrip">電影膠卷</option>
     </select>
   </div>
 
@@ -648,6 +652,193 @@
       </div>
       </div>
       <div class="hint" style="margin-bottom:12px" data-i18n="cf.hint"></div>
+    </div>
+  </div>
+
+  <div id="collageOpts">
+    <div class="sub">
+      <div class="title" data-i18n="collage.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="collage.min"></label>
+        <div class="inline">
+          <input type="number" id="collageMin" min="2" max="5" step="1" value="2" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.max"></label>
+        <div class="inline">
+          <input type="number" id="collageMax" min="2" max="5" step="1" value="5" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.swap"></label>
+        <div class="inline">
+          <input type="number" id="collageSwap" min="0.3" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.transMs"></label>
+        <div class="inline">
+          <input type="number" id="collageTransMs" min="0" max="5" step="0.1" value="0.9" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.trans"></label>
+        <select id="collageTrans">
+          <option value="random" selected data-i18n="effect.random"></option>
+          <option value="fade" data-i18n="effect.fade"></option>
+          <option value="slide" data-i18n="effect.slide"></option>
+          <option value="zoom" data-i18n="effect.zoom"></option>
+          <option value="wipe" data-i18n="effect.wipe"></option>
+          <option value="none" data-i18n="effect.none"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.layoutEvery"></label>
+        <div class="inline">
+          <input type="number" id="collageLayoutEvery" min="0" max="100" step="1" value="8" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.gap"></label>
+        <div class="inline">
+          <input type="number" id="collageGap" min="0" max="60" step="2" value="12" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.radius"></label>
+        <div class="inline">
+          <input type="number" id="collageRadius" min="0" max="60" step="2" value="12" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.thumb"></label>
+        <div class="inline">
+          <input type="number" id="collageThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="collageKb" checked />
+          <label for="collageKb" data-i18n="collage.kb"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="collage.hint"></div>
+    </div>
+  </div>
+
+  <div id="filmOpts">
+    <div class="sub">
+      <div class="title" data-i18n="film.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="film.size"></label>
+        <div class="inline">
+          <input type="number" id="filmSize" min="15" max="90" step="5" value="45" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.aspect"></label>
+        <select id="filmAspect">
+          <option value="1.5" selected data-i18n="aspect.film"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="0.75" data-i18n="aspect.portrait"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="film.speed"></label>
+        <div class="inline">
+          <input type="number" id="filmSpeed" min="5" max="2000" step="5" value="60" />
+          <span data-i18n="unit.pxs"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.dir"></label>
+        <select id="filmDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="film.tilt"></label>
+        <div class="inline">
+          <input type="number" id="filmTilt" min="-20" max="20" step="1" value="0" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.tone"></label>
+        <select id="filmTone">
+          <option value="none" selected data-i18n="tone.none"></option>
+          <option value="sepia" data-i18n="tone.sepia"></option>
+          <option value="bw" data-i18n="tone.bw"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="film.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="filmBigEvery" min="0" max="300" step="1" value="12" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.big"></label>
+        <div class="inline">
+          <input type="number" id="filmBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.fly"></label>
+        <div class="inline">
+          <input type="number" id="filmFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="filmBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.thumb"></label>
+        <div class="inline">
+          <input type="number" id="filmThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="filmGrain" checked />
+          <label for="filmGrain" data-i18n="film.grain"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="filmShake" checked />
+          <label for="filmShake" data-i18n="film.shake"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="filmBreathe" checked />
+          <label for="filmBreathe" data-i18n="film.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="film.hint"></div>
     </div>
   </div>
 

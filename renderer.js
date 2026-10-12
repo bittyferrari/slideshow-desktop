@@ -86,6 +86,16 @@ async function restoreSettings() {
   if (typeof s.cfDir === 'string') el('cfDir').value = s.cfDir;
   if (typeof s.cfReflect === 'boolean') el('cfReflect').checked = s.cfReflect;
   if (typeof s.cfBreathe === 'boolean') el('cfBreathe').checked = s.cfBreathe;
+  restoreWallFields(s, COLLAGE_FIELDS);
+  if (typeof s.collageTrans === 'string') el('collageTrans').value = s.collageTrans;
+  if (typeof s.collageKb === 'boolean') el('collageKb').checked = s.collageKb;
+  restoreWallFields(s, FILM_FIELDS);
+  restoreAspect('filmAspect', s.filmAspect);
+  if (typeof s.filmDir === 'string') el('filmDir').value = s.filmDir;
+  if (typeof s.filmTone === 'string') el('filmTone').value = s.filmTone;
+  for (const k of ['filmGrain', 'filmShake', 'filmBreathe']) {
+    if (typeof s[k] === 'boolean') el(k).checked = s[k];
+  }
   restoreFx(s);
   toggleEffectOpts();
   if (selectedDir) await refreshCount();
@@ -133,7 +143,7 @@ const REEL_FIELDS = [
 ];
 
 // 非「一般輪播」的播放模式（存檔時 effect 直接記模式名稱）
-const MODES = ['wall', 'reel', 'polaroid', 'coverflow'];
+const MODES = ['wall', 'reel', 'polaroid', 'coverflow', 'collage', 'filmstrip'];
 
 // ---- 拍立得散落設定（格式同上）----
 const POLA_FIELDS = [
@@ -163,6 +173,30 @@ const CF_FIELDS = [
   ['cfBigScale', 'cfBigScale', 100, 1],
   ['cfRadius', 'cfRadius', 8, 1],
   ['cfThumbScale', 'cfThumbScale', 1, 1],
+];
+
+// ---- 拼貼格設定（格式同上）----
+const COLLAGE_FIELDS = [
+  ['collageMin', 'collageMin', 2, 1],
+  ['collageMax', 'collageMax', 5, 1],
+  ['collageSwapMs', 'collageSwap', 3000, 1000],
+  ['collageTransMs', 'collageTransMs', 900, 1000],
+  ['collageLayoutEvery', 'collageLayoutEvery', 8, 1],
+  ['collageGap', 'collageGap', 12, 1],
+  ['collageRadius', 'collageRadius', 12, 1],
+  ['collageThumbScale', 'collageThumbScale', 1, 1],
+];
+
+// ---- 電影膠卷設定（格式同上）----
+const FILM_FIELDS = [
+  ['filmSize', 'filmSize', 45, 1],
+  ['filmSpeed', 'filmSpeed', 60, 1],
+  ['filmTilt', 'filmTilt', 0, 1],
+  ['filmBigEveryMs', 'filmBigEvery', 12000, 1000],
+  ['filmBigMs', 'filmBig', 3000, 1000],
+  ['filmFlyMs', 'filmFly', 1000, 1000],
+  ['filmBigScale', 'filmBigScale', 100, 1],
+  ['filmThumbScale', 'filmThumbScale', 1, 1],
 ];
 
 // 比例下拉選單：找最接近的選項（存的是 1.333 這類小數）
@@ -294,6 +328,8 @@ function toggleEffectOpts() {
   el('reelOpts').classList.toggle('on', mode === 'reel');
   el('polaOpts').classList.toggle('on', mode === 'polaroid');
   el('cfOpts').classList.toggle('on', mode === 'coverflow');
+  el('collageOpts').classList.toggle('on', mode === 'collage');
+  el('filmOpts').classList.toggle('on', mode === 'filmstrip');
   el('normalOpts').classList.toggle('off', mode !== 'normal');
   el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
     w.classList.toggle('on', w.dataset.fx === ef);
@@ -369,11 +405,21 @@ el('start').addEventListener('click', async () => {
     cfDir: el('cfDir').value,
     cfReflect: el('cfReflect').checked,
     cfBreathe: el('cfBreathe').checked,
+    collageTrans: el('collageTrans').value,
+    collageKb: el('collageKb').checked,
+    filmAspect: parseFloat(el('filmAspect').value) || 1.5,
+    filmDir: el('filmDir').value,
+    filmTone: el('filmTone').value,
+    filmGrain: el('filmGrain').checked,
+    filmShake: el('filmShake').checked,
+    filmBreathe: el('filmBreathe').checked,
     fx: collectFx(),
     ...collectWallFields(),
     ...collectWallFields(REEL_FIELDS),
     ...collectWallFields(POLA_FIELDS),
     ...collectWallFields(CF_FIELDS),
+    ...collectWallFields(COLLAGE_FIELDS),
+    ...collectWallFields(FILM_FIELDS),
   };
   // 儲存設定，下次開啟時還原
   await window.api.saveSettings(config);
