@@ -55,6 +55,8 @@
     #wallOpts.on { display: block; }
     #reelOpts { display: none; margin-top: -6px; }
     #reelOpts.on { display: block; }
+    #polaOpts, #cfOpts { display: none; margin-top: -6px; }
+    #polaOpts.on, #cfOpts.on { display: block; }
     #normalOpts.off { display: none; }
     #fxOpts { margin-top: -6px; }
     .fxPanel { display: none; margin-bottom: 18px; }
@@ -114,6 +116,8 @@
       <option value="normal" selected data-i18n="mode.normal">一般輪播</option>
       <option value="wall" data-i18n="effect.wall">Pinterest 圖牆（多圖 + 聚焦大圖）</option>
       <option value="reel" data-i18n="effect.reel">輪盤（平移 → 停在一張放大）</option>
+      <option value="polaroid" data-i18n="effect.polaroid">拍立得散落</option>
+      <option value="coverflow" data-i18n="effect.coverflow">3D 封面流</option>
     </select>
   </div>
 
@@ -430,6 +434,220 @@
       </div>
       </div>
       <div class="hint" style="margin-bottom:12px" data-i18n="reel.hint"></div>
+    </div>
+  </div>
+
+  <div id="polaOpts">
+    <div class="sub">
+      <div class="title" data-i18n="pola.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="pola.size"></label>
+        <div class="inline">
+          <input type="number" id="polaSize" min="20" max="90" step="5" value="55" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.aspect"></label>
+        <select id="polaAspect">
+          <option value="0.75" data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="0" selected data-i18n="aspect.orig"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.rotate"></label>
+        <div class="inline">
+          <input type="number" id="polaRotate" min="0" max="45" step="1" value="12" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.spread"></label>
+        <div class="inline">
+          <input type="number" id="polaSpread" min="0" max="45" step="1" value="20" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.drop"></label>
+        <div class="inline">
+          <input type="number" id="polaDrop" min="0.2" max="5" step="0.1" value="0.9" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.hold"></label>
+        <div class="inline">
+          <input type="number" id="polaHold" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.stack"></label>
+        <div class="inline">
+          <input type="number" id="polaStack" min="1" max="40" step="1" value="10" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.fade"></label>
+        <div class="inline">
+          <input type="number" id="polaFade" min="0.2" max="10" step="0.1" value="1.2" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.thumb"></label>
+        <div class="inline">
+          <input type="number" id="polaThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="polaCaption" />
+          <label for="polaCaption" data-i18n="pola.caption"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="pola.hint"></div>
+    </div>
+  </div>
+
+  <div id="cfOpts">
+    <div class="sub">
+      <div class="title" data-i18n="cf.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="cf.side"></label>
+        <div class="inline">
+          <input type="number" id="cfSide" min="1" max="8" step="1" value="4" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.size"></label>
+        <div class="inline">
+          <input type="number" id="cfSize" min="20" max="90" step="5" value="55" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.aspect"></label>
+        <select id="cfAspect">
+          <option value="0.75" data-i18n="aspect.portrait"></option>
+          <option value="1" selected data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="0" data-i18n="aspect.orig"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.dir"></label>
+        <select id="cfDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.angle"></label>
+        <div class="inline">
+          <input type="number" id="cfAngle" min="0" max="85" step="5" value="55" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.spacing"></label>
+        <div class="inline">
+          <input type="number" id="cfSpacing" min="5" max="100" step="1" value="28" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.depth"></label>
+        <div class="inline">
+          <input type="number" id="cfDepth" min="0" max="200" step="5" value="45" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.sideDim"></label>
+        <div class="inline">
+          <input type="number" id="cfSideDim" min="0" max="100" step="5" value="55" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.move"></label>
+        <div class="inline">
+          <input type="number" id="cfMove" min="0.1" max="5" step="0.1" value="0.8" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.hold"></label>
+        <div class="inline">
+          <input type="number" id="cfHold" min="0.3" max="120" step="0.1" value="2.5" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="cfBigEvery" min="0" max="50" step="1" value="4" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.big"></label>
+        <div class="inline">
+          <input type="number" id="cfBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.fly"></label>
+        <div class="inline">
+          <input type="number" id="cfFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="cfBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.radius"></label>
+        <div class="inline">
+          <input type="number" id="cfRadius" min="0" max="60" step="2" value="8" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.thumb"></label>
+        <div class="inline">
+          <input type="number" id="cfThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="cfReflect" checked />
+          <label for="cfReflect" data-i18n="cf.reflect"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="cfBreathe" checked />
+          <label for="cfBreathe" data-i18n="cf.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="cf.hint"></div>
     </div>
   </div>
 

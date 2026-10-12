@@ -233,6 +233,7 @@ async function updateInfo() {
   let meta = current.index ? `${current.index} / ${images.length}` : '';
   const img = wallHeroImg || (showingA ? el('slideA') : el('slideB')).querySelector('img');
   if (img && img.naturalWidth) meta += `　${img.naturalWidth} × ${img.naturalHeight}`;
+  else if (current.nw) meta += `　${current.nw} × ${current.nh}`; // 拍立得／封面流：用縮圖記下的原圖尺寸
 
   let fi = fileInfoCache.get(current.path);
   if (fi === undefined) {
@@ -1158,9 +1159,414 @@ async function reelStart() {
   if (await buildReel()) reelLoop();
 }
 
+// ==================== 共用：依指定顯示尺寸做 cover 裁切縮圖 ====================
+// boxFn(nw, nh) → { w, h }：這張圖在畫面上的顯示尺寸（CSS px）。
+// 縮圖解析度＝顯示尺寸 × 螢幕縮放 × 畫質倍率；原圖用完立刻釋放。
+function makeBoxThumb(path, boxFn, thumbScale = 1) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const fail = () => { img.src = ''; resolve(null); };
+    img.onerror = fail;
+    img.onload = async () => {
+      try { await img.decode(); } catch { return fail(); }
+      const nw = img.naturalWidth, nh = img.naturalHeight;
+      if (!nw || !nh) return fail();
+      const { w, h } = boxFn(nw, nh);
+      const k = (window.devicePixelRatio || 1) * thumbScale;
+      const pw = Math.max(1, Math.round(w * k)), ph = Math.max(1, Math.round(h * k));
+      let sx = 0, sy = 0, sw = nw, sh = nh;
+      if (nw / nh > w / h) { sw = Math.round(nh * w / h); sx = Math.round((nw - sw) / 2); }
+      else { sh = Math.round(nw * h / w); sy = Math.round((nh - sh) / 2); }
+      const cv = document.createElement('canvas');
+      cv.width = pw; cv.height = ph;
+      const ctx = cv.getContext('2d', { alpha: false });
+      try {
+        const bmp = await createImageBitmap(img, sx, sy, sw, sh, { resizeWidth: pw, resizeHeight: ph, resizeQuality: 'high' });
+        ctx.drawImage(bmp, 0, 0);
+        bmp.close();
+      } catch {
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, pw, ph);
+      }
+      img.src = '';
+      resolve({ path, canvas: cv, nw, nh, w, h });
+    };
+    img.src = toFileURL(path);
+  });
+}
+
+// 依比例設定算出放進 box×box 方框內的尺寸；aspect = 寬/高，0 = 原圖比例（限制在 1:2～2:1）
+function fitBox(box, aspect, nw, nh) {
+  const a = aspect > 0 ? aspect : Math.max(0.5, Math.min(2, nw / nh));
+  return a >= 1
+    ? { w: Math.round(box), h: Math.max(8, Math.round(box / a)) }
+    : { w: Math.max(8, Math.round(box * a)), h: Math.round(box) };
+}
+
+const shortSide = () => Math.min(window.innerWidth, window.innerHeight);
+const freeCanvas = (c) => { if (c) c.width = c.height = 0; };
+
+// ==================== 拍立得散落模式（Polaroid）====================
+// 流程：白框照片一張張「丟」到桌面上（從稍大、半透明的位置落下並帶隨機傾斜），
+//       最上面那張停留一段時間 → 下一張蓋上去 → 堆到上限後整疊淡出、清空重來。
+// 效能：每張只有一個 <canvas> 縮圖；只有正在落下的那張跑動畫（Web Animations，交給合成器），
+//       落地後把終點寫回 style 再拿掉動畫，桌上其他照片完全靜止。
+let polaMode = false;
+let P = null;
+let polaCount = 0;
+
+function polaSettings() {
+  return {
+    size: num(cfg.polaSize, 55) / 100,              // 照片（不含白框）占畫面短邊
+    aspect: num(cfg.polaAspect, 0),                 // 寬/高，0 = 原圖比例
+    rotate: num(cfg.polaRotate, 12),                // 最大傾斜角度
+    spread: num(cfg.polaSpread, 20) / 100,          // 落點離中心的散布範圍（占畫面）
+    dropMs: Math.max(100, num(cfg.polaDropMs, 900)),
+    holdMs: num(cfg.polaHoldMs, 3000),
+    stack: Math.max(1, num(cfg.polaStack, 10)),     // 堆幾張後整疊淡出
+    fadeMs: num(cfg.polaFadeMs, 1200),
+    thumbScale: num(cfg.polaThumbScale, 1),
+    caption: cfg.polaCaption === true,              // 白框下緣寫檔名
+  };
+}
+
+function polaThumb(path) {
+  const box = shortSide() * P.size;
+  return makeBoxThumb(path, (nw, nh) => fitBox(box, P.aspect, nw, nh), P.thumbScale);
+}
+
+// 一張照片：白框（左右上等寬、下緣較寬）＋ 縮圖 ＋ 可選的檔名
+function polaNode(th) {
+  const S = Math.max(th.w, th.h);
+  const pad = Math.round(S * 0.05), bottom = Math.round(S * 0.17);
+  const W = th.w + pad * 2, H = th.h + pad + bottom;
+  const node = document.createElement('div');
+  node.className = 'pola';
+  node.style.width = W + 'px';
+  node.style.height = H + 'px';
+  th.canvas.style.left = pad + 'px';
+  th.canvas.style.top = pad + 'px';
+  th.canvas.style.width = th.w + 'px';
+  th.canvas.style.height = th.h + 'px';
+  node.appendChild(th.canvas);
+  if (P.caption) {
+    const cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.style.height = bottom + 'px';
+    cap.style.fontSize = Math.max(12, Math.round(bottom * 0.32)) + 'px';
+    const sp = document.createElement('span');
+    sp.textContent = th.path.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+    cap.appendChild(sp);
+    node.appendChild(cap);
+  }
+  return { node, W, H };
+}
+
+async function polaDrop(th) {
+  const { node, W, H } = polaNode(th);
+  const vw = window.innerWidth, vh = window.innerHeight;
+  // 落點：畫面中心附近的橢圓範圍內隨機，並確保照片大部分在畫面內
+  const ang = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random());
+  let cx = vw / 2 + Math.cos(ang) * rr * P.spread * vw;
+  let cy = vh / 2 + Math.sin(ang) * rr * P.spread * vh;
+  cx = Math.max(W * 0.45, Math.min(vw - W * 0.45, cx));
+  cy = Math.max(H * 0.45, Math.min(vh - H * 0.45, cy));
+  const rot = (Math.random() * 2 - 1) * P.rotate;
+  const x = cx - W / 2, y = cy - H / 2;
+  const end = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) rotate(${rot.toFixed(2)}deg)`;
+  // 起點：從畫面外側某個方向丟進來，比較大（離鏡頭近）、多轉一點
+  const ta = Math.random() * Math.PI * 2, td = shortSide() * 0.18;
+  const sx = x + Math.cos(ta) * td, sy = y + Math.sin(ta) * td;
+  const srot = rot + (Math.random() * 2 - 1) * 18;
+  const start = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) rotate(${srot.toFixed(2)}deg) scale(1.45)`;
+
+  node.style.transform = start;
+  node.style.opacity = '0';
+  el('polaPile').appendChild(node);
+  polaCount++;
+  current = { path: th.path, index: 0, nw: th.nw, nh: th.nh };
+  if (infoVisible) updateInfo();
+
+  const anim = node.animate([
+    { transform: start, opacity: 0, boxShadow: '0 30px 70px rgba(0,0,0,0.45)' },
+    { opacity: 1, offset: 0.3 },
+    { transform: end, opacity: 1, boxShadow: '0 2px 4px rgba(0,0,0,0.35), 0 10px 26px rgba(0,0,0,0.45)' },
+  ], { duration: P.dropMs, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'forwards' });
+  await anim.finished.catch(() => {});
+  // 終點寫回 style 再拿掉動畫（陰影回到 CSS 預設），之後這張完全靜止
+  node.style.transform = end;
+  node.style.opacity = '';
+  anim.cancel();
+}
+
+// 整疊淡出 → 清空 → 恢復
+async function polaClear() {
+  const pile = el('polaPile');
+  pile.classList.add('clear');
+  await sleep(P.fadeMs);
+  pile.querySelectorAll('canvas').forEach(freeCanvas);
+  pile.innerHTML = '';
+  polaCount = 0;
+  pile.style.transition = 'none';
+  pile.classList.remove('clear');
+  void pile.offsetWidth;
+  pile.style.transition = '';
+}
+
+async function polaLoop() {
+  // 下一張的縮圖永遠在前一張停留期間先做好
+  const prepare = () => preloadMany(1, 1, polaThumb).then((a) => a[0] || null);
+  let pending = prepare();
+  while (!wallStopped) {
+    const th = await pending;
+    if (wallStopped) return;
+    if (!th) {
+      // 不循環且圖已用完：跟一般模式一樣結束
+      showMessage(window.I18N.t('msg.finished'));
+      setTimeout(() => window.api.exitSlideshow(), 1500);
+      return;
+    }
+    if (polaCount >= P.stack) await polaClear();
+    if (wallStopped) return;
+    pending = prepare();
+    await polaDrop(th);
+    await sleep(P.holdMs);
+  }
+}
+
+function polaStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  polaMode = true;
+  wallStopped = false;
+  P = polaSettings();
+  document.documentElement.style.setProperty('--pola-fade-ms', P.fadeMs + 'ms');
+  document.body.classList.add('polaroid-mode');
+  polaLoop();
+}
+
+// ==================== 3D 封面流模式（Coverflow）====================
+// 流程：中間一張正面，兩側各 N 張斜擺成 3D 透視 → 停留 → 整排往前移一格（下一張轉到正中）→ …
+//       每隔幾格，正中那張用輪盤／圖牆同一套 hero 動畫放大成大圖、停留、收回。
+// 做法：每張以「邏輯位置 li」記錄，畫面位置 d = li − c（c＝目前正中的邏輯位置）。
+//       前移只是 c++ 後重新寫每張的 transform，由 CSS transition 補間；
+//       右端（或左端）外面先放一張透明的，前移時淡入；另一端移出畫面的那張淡出後移除。
+// 效能：同時最多 2N+2 張 <canvas>；只動 transform / opacity；側邊變暗用每張自己的黑幕。
+let cfMode = false;
+let C = null;
+let cfItems = [];      // { node, inner, veil, canvas, path, nw, nh, li }
+let cfC = 0;
+let cfBox = 0;         // 基準尺寸（px）
+let cfNeedsRebuild = false;
+
+function cfSettings() {
+  return {
+    side: Math.max(1, Math.min(8, num(cfg.cfSide, 4))),   // 每側顯示幾張
+    size: num(cfg.cfSize, 55) / 100,                     // 圖片大小（占畫面短邊）
+    aspect: num(cfg.cfAspect, 1),                        // 寬/高，0 = 原圖比例
+    angle: num(cfg.cfAngle, 55),                         // 側邊傾斜角度
+    spacing: num(cfg.cfSpacing, 28) / 100,               // 側邊每張的間距（占圖片寬）
+    depth: num(cfg.cfDepth, 45) / 100,                   // 側邊往後退的深度（占圖片寬）
+    sideDim: num(cfg.cfSideDim, 55) / 100,               // 側邊亮度
+    moveMs: Math.max(100, num(cfg.cfMoveMs, 800)),
+    holdMs: num(cfg.cfHoldMs, 2500),
+    dir: cfg.cfDir === 'right' ? -1 : 1,                 // 1：往左流（新圖從右邊進來）
+    bigEvery: Math.max(0, num(cfg.cfBigEvery, 4)),       // 每幾格放大一次，0 = 不放大
+    flyMs: num(cfg.cfFlyMs, 1000),
+    bigMs: num(cfg.cfBigMs, 3000),
+    bigScale: num(cfg.cfBigScale, 100) / 100,
+    radius: num(cfg.cfRadius, 8),
+    reflect: cfg.cfReflect !== false,
+    breathe: cfg.cfBreathe !== false,
+    thumbScale: num(cfg.cfThumbScale, 1),
+  };
+}
+
+function applyCfVars() {
+  const r = document.documentElement.style;
+  r.setProperty('--cf-move-ms', C.moveMs + 'ms');
+  r.setProperty('--cf-radius', C.radius + 'px');
+  r.setProperty('--cf-persp', Math.round(Math.max(800, cfBox * 3)) + 'px');
+  r.setProperty('--fly-ms', C.flyMs + 'ms');
+  r.setProperty('--breathe-ms', Math.max(4000, C.bigMs * 2) + 'ms');
+  el('cf').classList.toggle('reflect', C.reflect);
+}
+
+function cfThumb(path) {
+  return makeBoxThumb(path, (nw, nh) => fitBox(cfBox, C.aspect, nw, nh), C.thumbScale);
+}
+
+// 畫面位置 d 的 transform / 亮度 / 是否可見
+function cfPose(d) {
+  const k = Math.abs(d), s = Math.sign(d) * C.dir;
+  // 有倒影時整排往上提一點，讓倒影也在畫面內
+  const ty = C.reflect ? -Math.round(cfBox * 0.1) : 0;
+  if (k === 0) {
+    return { tf: `translate3d(0px, ${ty}px, 0px) rotateY(0deg)`, veil: 0, op: 1, z: 1000 };
+  }
+  const x = s * (cfBox * 0.78 + (k - 1) * cfBox * C.spacing);
+  const z = -cfBox * C.depth;
+  return {
+    tf: `translate3d(${x.toFixed(1)}px, ${ty}px, ${z.toFixed(1)}px) rotateY(${(s * C.angle).toFixed(1)}deg)`,
+    veil: Math.min(0.92, (1 - C.sideDim) + (k - 1) * 0.08),
+    op: k > C.side ? 0 : 1,
+    z: 1000 - k,
+  };
+}
+
+function cfApply(it, animate) {
+  const p = cfPose(it.li - cfC);
+  if (!animate) { it.node.style.transition = 'none'; it.veil.style.transition = 'none'; }
+  it.node.style.transform = p.tf;
+  it.node.style.opacity = String(p.op);
+  it.node.style.zIndex = String(p.z);
+  it.veil.style.opacity = String(p.veil);
+  if (!animate) { void it.node.offsetWidth; it.node.style.transition = ''; it.veil.style.transition = ''; }
+}
+
+function cfMakeItem(th, li) {
+  const node = document.createElement('div');
+  node.className = 'cfi';
+  node.style.width = th.w + 'px';
+  node.style.height = th.h + 'px';
+  node.style.marginLeft = -th.w / 2 + 'px';
+  node.style.marginTop = -th.h / 2 + 'px';
+  const inner = document.createElement('div');
+  inner.className = 'cfi-inner';
+  const veil = document.createElement('div');
+  veil.className = 'cfi-veil';
+  inner.appendChild(th.canvas);
+  inner.appendChild(veil);
+  node.appendChild(inner);
+  const it = { node, inner, veil, canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: th.w, h: th.h, li };
+  el('cfStage').appendChild(node);
+  cfApply(it, false);
+  return it;
+}
+
+// 圖不夠時（張數少且不循環）把現有的複製一份來用
+function cfClone(src) {
+  const c = document.createElement('canvas');
+  c.width = src.canvas.width; c.height = src.canvas.height;
+  c.getContext('2d', { alpha: false }).drawImage(src.canvas, 0, 0);
+  return { canvas: c, path: src.path, nw: src.nw, nh: src.nh, w: src.w, h: src.h };
+}
+
+function cfRemove(it) {
+  freeCanvas(it.canvas);
+  it.node.remove();
+}
+
+function cfCenter() {
+  return cfItems.find((it) => it.li === cfC) || null;
+}
+
+function cfSetCurrent() {
+  const it = cfCenter();
+  if (!it) return;
+  current = { path: it.path, index: 0, nw: it.nw, nh: it.nh };
+  if (infoVisible) updateInfo();
+}
+
+async function cfBuild() {
+  const stage = el('cfStage');
+  stage.classList.add('fade');
+  if (cfItems.length) await sleep(450);
+  cfItems.forEach(cfRemove);
+  cfItems = [];
+  cfBox = Math.max(60, Math.round(shortSide() * C.size));
+  applyCfVars();
+  cfC = 0;
+  const need = C.side * 2 + 1;
+  const thumbs = await preloadMany(need, 3, cfThumb);
+  if (wallStopped) return false;
+  if (thumbs.length === 0) { showMessage(window.I18N.t('msg.noImages')); return false; }
+  for (let i = 0; i < need; i++) {
+    const th = i < thumbs.length ? thumbs[i] : cfClone(thumbs[i % thumbs.length]);
+    cfItems.push(cfMakeItem(th, i - C.side));
+  }
+  cfSetCurrent();
+  void stage.offsetWidth;
+  stage.classList.remove('fade');
+  await sleep(450);
+  return true;
+}
+
+// 前移一格：遠端先補一張透明的 → c++ → 全部 transition 到新位置 → 移除移出畫面的那張
+async function cfStep(th) {
+  const far = cfC + C.side + 1;
+  const oldest = cfItems.reduce((a, b) => (b.li < a.li ? b : a));
+  cfItems.push(cfMakeItem(th || cfClone(oldest), far));
+  cfC++;
+  for (const it of cfItems) cfApply(it, true);
+  cfSetCurrent();
+  await sleep(C.moveMs);
+  const keep = [];
+  for (const it of cfItems) (it.li < cfC - C.side ? cfRemove(it) : keep.push(it));
+  cfItems = keep;
+}
+
+// 正中那張放大成大圖 → 停留 → 收回（與圖牆／輪盤共用 hero）
+async function cfSpotlight() {
+  const it = cfCenter();
+  if (!it) return;
+  const full = await loadFull(it.path);
+  if (wallStopped || !full) return;
+  wallHeroImg = full;
+  const dims = heroOpen(full, it.inner, C.bigScale, C.radius);
+  await sleep(C.flyMs);
+  if (wallStopped) return;
+  heroSettled();
+  document.body.classList.add('big');
+  if (C.breathe) el('heroImg').classList.add('breathe');
+  await sleep(C.bigMs);
+  document.body.classList.remove('big');
+  if (wallStopped) return;
+  heroClose(it.inner, dims);
+  await sleep(C.flyMs);
+  heroHide();
+  wallHeroImg = null;
+}
+
+async function cfLoop() {
+  let steps = 0;
+  const prepare = () => preloadMany(1, 1, cfThumb).then((a) => a[0] || null);
+  let pending = prepare();
+  while (!wallStopped) {
+    if (cfNeedsRebuild) {
+      cfNeedsRebuild = false;
+      const old = await pending; // 尺寸變了，預先做好的縮圖作廢
+      if (old) freeCanvas(old.canvas);
+      if (!(await cfBuild())) return;
+      pending = prepare();
+    }
+    await sleep(C.holdMs);
+    if (wallStopped) return;
+    if (C.bigEvery > 0 && steps > 0 && steps % C.bigEvery === 0) {
+      await cfSpotlight();
+      if (wallStopped) return;
+      await sleep(300);
+    }
+    const th = await pending;
+    if (wallStopped) return;
+    if (cfNeedsRebuild) { if (th) freeCanvas(th.canvas); pending = Promise.resolve(null); continue; }
+    pending = prepare();
+    await cfStep(th); // th 為 null（不循環且圖用完）時會複製最舊那張，持續流動
+    steps++;
+  }
+}
+
+async function cfStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  cfMode = true;
+  wallStopped = false;
+  C = cfSettings();
+  document.body.classList.add('coverflow-mode');
+  if (await cfBuild()) cfLoop();
+}
+
 // 視窗大小改變時重建圖牆（欄寬變了，高度要重算）；輪盤則在下一輪開始前重建
 let resizeTimer = null;
 window.addEventListener('resize', () => {
+  if (cfMode) { cfNeedsRebuild = true; return; }
   if (reelMode) { reelNeedsRebuild = true; return; }
   if (!wallMode) return;
   clearTimeout(resizeTimer);
@@ -1189,5 +1595,7 @@ window.api.onConfig(async (config) => {
   // Pinterest 圖牆模式走另一條播放流程
   if (cfg.effect === 'wall') wallStart();
   else if (cfg.effect === 'reel') reelStart();
+  else if (cfg.effect === 'polaroid') polaStart();
+  else if (cfg.effect === 'coverflow') cfStart();
   else start();
 });

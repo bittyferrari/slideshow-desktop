@@ -62,7 +62,7 @@ async function restoreSettings() {
   if (typeof s.loop === 'boolean') el('loop').checked = s.loop;
   if (typeof s.scaleMode === 'string') el('scaleMode').value = s.scaleMode;
   // 舊設定相容：fade 布林 → effect
-  if (s.effect === 'wall' || s.effect === 'reel') {
+  if (MODES.includes(s.effect)) {
     el('mode').value = s.effect;
     el('effect').value = typeof s.slideEffect === 'string' ? s.slideEffect : 'fade';
   } else if (typeof s.effect === 'string') el('effect').value = s.effect;
@@ -78,6 +78,14 @@ async function restoreSettings() {
   }
   if (typeof s.reelDir === 'string') el('reelDir').value = s.reelDir;
   if (typeof s.reelBreathe === 'boolean') el('reelBreathe').checked = s.reelBreathe;
+  restoreWallFields(s, POLA_FIELDS);
+  restoreAspect('polaAspect', s.polaAspect);
+  if (typeof s.polaCaption === 'boolean') el('polaCaption').checked = s.polaCaption;
+  restoreWallFields(s, CF_FIELDS);
+  restoreAspect('cfAspect', s.cfAspect);
+  if (typeof s.cfDir === 'string') el('cfDir').value = s.cfDir;
+  if (typeof s.cfReflect === 'boolean') el('cfReflect').checked = s.cfReflect;
+  if (typeof s.cfBreathe === 'boolean') el('cfBreathe').checked = s.cfBreathe;
   restoreFx(s);
   toggleEffectOpts();
   if (selectedDir) await refreshCount();
@@ -124,6 +132,45 @@ const REEL_FIELDS = [
   ['reelThumbScale', 'reelThumbScale', 1, 1],
 ];
 
+// 非「一般輪播」的播放模式（存檔時 effect 直接記模式名稱）
+const MODES = ['wall', 'reel', 'polaroid', 'coverflow'];
+
+// ---- 拍立得散落設定（格式同上）----
+const POLA_FIELDS = [
+  ['polaSize', 'polaSize', 55, 1],
+  ['polaRotate', 'polaRotate', 12, 1],
+  ['polaSpread', 'polaSpread', 20, 1],
+  ['polaDropMs', 'polaDrop', 900, 1000],
+  ['polaHoldMs', 'polaHold', 3000, 1000],
+  ['polaStack', 'polaStack', 10, 1],
+  ['polaFadeMs', 'polaFade', 1200, 1000],
+  ['polaThumbScale', 'polaThumbScale', 1, 1],
+];
+
+// ---- 3D 封面流設定（格式同上）----
+const CF_FIELDS = [
+  ['cfSide', 'cfSide', 4, 1],
+  ['cfSize', 'cfSize', 55, 1],
+  ['cfAngle', 'cfAngle', 55, 1],
+  ['cfSpacing', 'cfSpacing', 28, 1],
+  ['cfDepth', 'cfDepth', 45, 1],
+  ['cfSideDim', 'cfSideDim', 55, 1],
+  ['cfMoveMs', 'cfMove', 800, 1000],
+  ['cfHoldMs', 'cfHold', 2500, 1000],
+  ['cfBigEvery', 'cfBigEvery', 4, 1],
+  ['cfBigMs', 'cfBig', 3000, 1000],
+  ['cfFlyMs', 'cfFly', 1000, 1000],
+  ['cfBigScale', 'cfBigScale', 100, 1],
+  ['cfRadius', 'cfRadius', 8, 1],
+  ['cfThumbScale', 'cfThumbScale', 1, 1],
+];
+
+// 比例下拉選單：找最接近的選項（存的是 1.333 這類小數）
+function restoreAspect(id, v) {
+  if (typeof v !== 'number') return;
+  const opt = [...el(id).options].find((o) => Math.abs(parseFloat(o.value) - v) < 0.01);
+  if (opt) el(id).value = opt.value;
+}
 
 // ---- 各切換效果的專屬設定 ----
 // 面板依 fx.js 的 SPECS 動態產生：選到哪個效果就只顯示那個效果的參數，
@@ -245,6 +292,8 @@ function toggleEffectOpts() {
   const ef = el('effect').value;
   el('wallOpts').classList.toggle('on', mode === 'wall');
   el('reelOpts').classList.toggle('on', mode === 'reel');
+  el('polaOpts').classList.toggle('on', mode === 'polaroid');
+  el('cfOpts').classList.toggle('on', mode === 'coverflow');
   el('normalOpts').classList.toggle('off', mode !== 'normal');
   el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
     w.classList.toggle('on', w.dataset.fx === ef);
@@ -314,9 +363,17 @@ el('start').addEventListener('click', async () => {
     reelAspect: parseFloat(el('reelAspect').value) || 0,
     reelDir: el('reelDir').value,
     reelBreathe: el('reelBreathe').checked,
+    polaAspect: parseFloat(el('polaAspect').value) || 0,
+    polaCaption: el('polaCaption').checked,
+    cfAspect: parseFloat(el('cfAspect').value) || 0,
+    cfDir: el('cfDir').value,
+    cfReflect: el('cfReflect').checked,
+    cfBreathe: el('cfBreathe').checked,
     fx: collectFx(),
     ...collectWallFields(),
     ...collectWallFields(REEL_FIELDS),
+    ...collectWallFields(POLA_FIELDS),
+    ...collectWallFields(CF_FIELDS),
   };
   // 儲存設定，下次開啟時還原
   await window.api.saveSettings(config);
