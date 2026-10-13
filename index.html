@@ -63,6 +63,8 @@
     #ringOpts.on, #bookOpts.on { display: block; }
     #mosaicOpts, #cnvOpts { display: none; margin-top: -6px; }
     #mosaicOpts.on, #cnvOpts.on { display: block; }
+    #floatOpts, #tlOpts { display: none; margin-top: -6px; }
+    #floatOpts.on, #tlOpts.on { display: block; }
     #normalOpts.off { display: none; }
     #fxOpts { margin-top: -6px; }
     .fxPanel { display: none; margin-bottom: 18px; }
@@ -130,6 +132,8 @@
       <option value="book" data-i18n="effect.book">翻頁書</option>
       <option value="mosaic" data-i18n="effect.mosaic">馬賽克組合</option>
       <option value="canvas" data-i18n="effect.canvas">無限畫布漫遊</option>
+      <option value="float" data-i18n="effect.float">漂浮星空／泡泡</option>
+      <option value="timeline" data-i18n="effect.timeline">時間軸</option>
     </select>
   </div>
 
@@ -159,6 +163,14 @@
       <option value="random" data-i18n="effect.random">隨機</option>
       <option value="none" data-i18n="effect.none">無</option>
     </select>
+  </div>
+
+  <div class="field">
+    <div class="check-row">
+      <input type="checkbox" id="pairPortrait" />
+      <label for="pairPortrait" data-i18n="opt.pair">直式照片兩張並排</label>
+    </div>
+    <div class="hint" data-i18n="opt.pairHint"></div>
   </div>
 
   <!-- 各切換效果的專屬設定（由 renderer.js 依 fx.js 的定義動態產生，只顯示目前選到的效果）-->
@@ -1216,6 +1228,132 @@
       </div>
       </div>
       <div class="hint" style="margin-bottom:12px" data-i18n="cnv.hint"></div>
+    </div>
+  </div>
+
+  <div id="floatOpts">
+    <div class="sub">
+      <div class="title" data-i18n="float.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="float.style"></label>
+        <select id="floatStyle">
+          <option value="stars" selected data-i18n="style.stars"></option>
+          <option value="bubbles" data-i18n="style.bubbles"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="float.count"></label>
+        <div class="inline">
+          <input type="number" id="floatCount" min="6" max="80" step="1" value="30" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.size"></label>
+        <div class="inline">
+          <input type="number" id="floatSize" min="5" max="60" step="1" value="22" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.travel"></label>
+        <div class="inline">
+          <input type="number" id="floatTravel" min="2" max="60" step="1" value="14" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="floatBigEvery" min="0" max="300" step="1" value="10" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.big"></label>
+        <div class="inline">
+          <input type="number" id="floatBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.fly"></label>
+        <div class="inline">
+          <input type="number" id="floatFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="floatBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.thumb"></label>
+        <div class="inline">
+          <input type="number" id="floatThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="floatBreathe" checked />
+          <label for="floatBreathe" data-i18n="float.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="float.hint"></div>
+    </div>
+  </div>
+
+  <div id="tlOpts">
+    <div class="sub">
+      <div class="title" data-i18n="timeline.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="timeline.order"></label>
+        <select id="tlOrder">
+          <option value="asc" selected data-i18n="order.asc"></option>
+          <option value="desc" data-i18n="order.desc"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="timeline.side"></label>
+        <select id="tlSide">
+          <option value="left" selected data-i18n="side.left"></option>
+          <option value="right" data-i18n="side.right"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="timeline.hold"></label>
+        <div class="inline">
+          <input type="number" id="tlHold" min="0.5" max="120" step="0.5" value="4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="timeline.fade"></label>
+        <div class="inline">
+          <input type="number" id="tlFade" min="0" max="5" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="tlKb" checked />
+          <label for="tlKb" data-i18n="timeline.kb"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="tlShowTime" />
+          <label for="tlShowTime" data-i18n="timeline.showTime"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="timeline.hint"></div>
     </div>
   </div>
 

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('api', {
   // 播放頁用
   exitSlideshow: () => ipcRenderer.invoke('exit-slideshow'),
   fileInfo: (p) => ipcRenderer.invoke('file-info', p),
+  photoDates: (paths) => ipcRenderer.invoke('photo-dates', paths),
   onConfig: (callback) =>
     ipcRenderer.on('slideshow-config', (_evt, config) => callback(config)),
 });

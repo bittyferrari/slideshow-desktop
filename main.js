@@ -137,6 +137,99 @@ ipcMain.handle('file-info', async (_evt, filePath) => {
   }
 });
 
+// ---- 拍攝日期（時間軸模式用）----
+// 不用任何套件：只讀檔案開頭 128KB，從 JPEG 的 EXIF（APP1）找 DateTimeOriginal，
+// 找不到再用 DateTimeDigitized、IFD0 的 DateTime；都沒有（或非 JPEG）就用檔案修改時間。
+const exifDateCache = new Map();
+
+function exifToMs(s) {
+  const m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(s || '');
+  if (!m || m[1] === '0000') return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  return isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function parseTiffDate(b, t, end) {
+  const le = b.toString('ascii', t, t + 2) === 'II';
+  const u16 = (o) => (le ? b.readUInt16LE(o) : b.readUInt16BE(o));
+  const u32 = (o) => (le ? b.readUInt32LE(o) : b.readUInt32BE(o));
+  const readIfd = (off) => {
+    const tags = {};
+    const base = t + off;
+    if (off <= 0 || base + 2 > end) return tags;
+    const n = u16(base);
+    for (let i = 0; i < n; i++) {
+      const e = base + 2 + i * 12;
+      if (e + 12 > end) break;
+      tags[u16(e)] = { type: u16(e + 2), cnt: u32(e + 4), at: e + 8 };
+    }
+    return tags;
+  };
+  const str = (ent) => {
+    if (!ent || ent.type !== 2) return null;
+    const o = ent.cnt <= 4 ? ent.at : t + u32(ent.at);
+    if (o + ent.cnt > end) return null;
+    return b.toString('ascii', o, o + ent.cnt).replace(/\0[\s\S]*$/, '');
+  };
+  const ifd0 = readIfd(u32(t + 4));
+  let s = null;
+  if (ifd0[0x8769]) {
+    const exif = readIfd(u32(ifd0[0x8769].at));
+    s = exifToMs(str(exif[0x9003])) || exifToMs(str(exif[0x9004]));
+  }
+  return s || exifToMs(str(ifd0[0x0132]));
+}
+
+function parseExifDate(b) {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let p = 2;
+  while (p + 4 <= b.length) {
+    if (b[p] !== 0xff) return null;
+    const marker = b[p + 1];
+    if (marker === 0xd9 || marker === 0xda) return null; // 影像資料開始了，不會再有 EXIF
+    const len = b.readUInt16BE(p + 2);
+    if (marker === 0xe1 && b.toString('ascii', p + 4, p + 10) === 'Exif\0\0') {
+      try { return parseTiffDate(b, p + 10, Math.min(b.length, p + 2 + len)); } catch (e) { return null; }
+    }
+    p += 2 + len;
+  }
+  return null;
+}
+
+async function photoDate(file) {
+  if (exifDateCache.has(file)) return exifDateCache.get(file);
+  let t = null;
+  let fh = null;
+  try {
+    fh = await fs.promises.open(file, 'r');
+    const buf = Buffer.alloc(131072);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    t = parseExifDate(buf.subarray(0, bytesRead));
+  } catch (e) { t = null; }
+  finally { if (fh) await fh.close().catch(() => {}); }
+  let r;
+  if (t) r = { t, exif: true };
+  else {
+    try { r = { t: fs.statSync(file).mtimeMs, exif: false }; } catch (e) { r = { t: 0, exif: false }; }
+  }
+  exifDateCache.set(file, r);
+  return r;
+}
+
+// 一次查一批檔案的拍攝日期（併發 8 個）
+ipcMain.handle('photo-dates', async (_evt, files) => {
+  const out = new Array(files.length);
+  let i = 0;
+  async function worker() {
+    while (i < files.length) {
+      const k = i++;
+      out[k] = await photoDate(files[k]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, files.length) }, worker));
+  return out;
+});
+
 // 由播放頁請求退出 slideshow
 ipcMain.handle('exit-slideshow', async () => {
   if (slideshowWin) {

@@ -164,13 +164,31 @@ async function next() {
     }
     if (!loaded) return;
 
+    // 直式照片兩張並排：這張是直的、螢幕是橫的 → 試著拿下一張；也是直的就並排，否則放回去下次再用
+    const img2 = incoming.querySelector('.img2');
+    let paired = false;
+    if (cfg.pairPortrait && window.innerWidth > window.innerHeight && img.naturalHeight > img.naturalWidth * 1.05 && idx < images.length) {
+      const p2 = images[idx];
+      img2.src = toFileURL(p2);
+      try {
+        await img2.decode();
+        if (img2.naturalHeight > img2.naturalWidth * 1.05) {
+          paired = true;
+          idx++;
+          current.path2 = p2;
+        }
+      } catch { /* 壞圖：不並排，下一輪會被跳過 */ }
+    }
+    if (!paired) img2.removeAttribute('src');
+
     // 效果套在 slide 元素上（而非舞台）：舊圖的 img 動畫在淡出期間才能無縫延續，
     // 不會因規則失效而瞬間跳回原始 transform。
     const ef = pickEffect();
-    incoming.className = 'slide effect-' + ef;
+    incoming.className = 'slide effect-' + ef + (paired ? ' pair' : '');
 
     // 依「這個效果自己的設定」把 CSS 變數寫進 inline style
     applyEffectVars(ef, incoming, outgoing, img);
+    if (paired) img2.style.cssText = img.style.cssText; // 第二張用同一組變數，動作一致
 
     // in→out 在同一次樣式計算內完成，且 .in/.out 的 img 動畫宣告相同 → 動畫不中斷
     outgoing.classList.remove('in');
@@ -3094,10 +3112,402 @@ async function canvasStart() {
   if (await cvBuild()) cvLoop();
 }
 
+// ==================== 漂浮星空／泡泡模式（Float）====================
+// 星空：縮圖在 3D 空間中由遠往近飛過（像星際飛行），越近越大、最後飛出畫面；
+// 泡泡：圓形縮圖從畫面下方往上漂、左右輕擺，遠近不同大小與速度（視差）。
+// 每隔幾秒，所有粒子暫停，挑一張正在畫面中段的用 hero 放大成大圖 → 收回 → 繼續。
+// 效能：每個粒子一個 Web Animations 動畫（只動 transform / opacity，交給合成器），
+//       飛完重新出生時換位置、換一張新縮圖；背景星點是一張靜態 canvas。
+let floatMode = false;
+let FL = null;
+let flParts = [];      // { node, inner, canvas, anim, path, nw, nh, w, h, d }
+let flBusy = false;
+
+function floatSettings() {
+  return {
+    style: cfg.floatStyle === 'bubbles' ? 'bubbles' : 'stars',
+    count: Math.max(6, Math.min(80, num(cfg.floatCount, 30))),
+    size: num(cfg.floatSize, 22) / 100,                    // 縮圖大小（占畫面短邊）
+    travelMs: Math.max(2000, num(cfg.floatTravelMs, 14000)), // 一張飛過／漂過的時間
+    bigEveryMs: num(cfg.floatBigEveryMs, 10000),            // 每隔多久放大一張，0 = 不放大
+    bigMs: num(cfg.floatBigMs, 3000),
+    flyMs: num(cfg.floatFlyMs, 1000),
+    bigScale: num(cfg.floatBigScale, 100) / 100,
+    breathe: cfg.floatBreathe !== false,
+    thumbScale: num(cfg.floatThumbScale, 1),
+  };
+}
+
+function flBox(nw, nh) {
+  const S = shortSide() * FL.size;
+  if (FL.style === 'bubbles') return { w: Math.round(S), h: Math.round(S) };     // 泡泡：正方形裁成圓
+  const a = Math.max(0.5, Math.min(2, nw / nh));
+  return a >= 1 ? { w: Math.round(S), h: Math.round(S / a) } : { w: Math.round(S * a), h: Math.round(S) };
+}
+
+function flThumb() {
+  // 星空飛到最近時會放大約 2 倍，縮圖解析度給 1.5 倍
+  return nextBoxThumbCycle(flBox, FL.thumbScale * (FL.style === 'stars' ? 1.5 : 1)).then((th) => {
+    if (th) { const b = flBox(th.nw, th.nh); th.w = b.w; th.h = b.h; }
+    return th;
+  });
+}
+
+function flSetImage(p, th) {
+  if (p.canvas) { freeCanvas(p.canvas); p.canvas.remove(); }
+  p.inner.appendChild(th.canvas);
+  Object.assign(p, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: th.w, h: th.h });
+  Object.assign(p.node.style, { width: th.w + 'px', height: th.h + 'px', marginLeft: -th.w / 2 + 'px', marginTop: -th.h / 2 + 'px' });
+}
+
+// 一段飛行的關鍵影格
+function flKeyframes(p) {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  if (FL.style === 'stars') {
+    const P = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fl-persp')) || 900;
+    const R = Math.max(vw, vh) * 0.7;
+    const ang = Math.random() * Math.PI * 2, r = R * (0.2 + 0.8 * Math.sqrt(Math.random()));
+    const x = Math.cos(ang) * r, y = Math.sin(ang) * r * 0.75;
+    const zf = -P * 8, zn = P * 0.55;
+    const t = (z) => `translate3d(${x.toFixed(0)}px, ${y.toFixed(0)}px, ${z.toFixed(0)}px)`;
+    return [
+      { transform: t(zf), opacity: 0 },
+      { transform: t(zf + (zn - zf) * 0.15), opacity: 1, offset: 0.15 },
+      { transform: t(zf + (zn - zf) * 0.88), opacity: 1, offset: 0.88 },
+      { transform: t(zn), opacity: 0 },
+    ];
+  }
+  // 泡泡：深度 d 決定大小、透明度；由下往上，左右擺動
+  const d = p.d, sc = 0.45 + 0.55 * d;
+  const x0 = (Math.random() - 0.5) * vw * 0.95, amp = (20 + Math.random() * 50) * sc, ph = Math.random() * Math.PI * 2;
+  const y0 = vh / 2 + p.h, y1 = -vh / 2 - p.h;
+  const kf = [];
+  for (let i = 0; i <= 8; i++) {
+    const u = i / 8;
+    const x = x0 + Math.sin(ph + u * Math.PI * 3) * amp;
+    kf.push({
+      transform: `translate(${x.toFixed(0)}px, ${(y0 + (y1 - y0) * u).toFixed(0)}px) scale(${sc.toFixed(3)})`,
+      opacity: u === 0 || u === 1 ? 0 : 0.55 + 0.45 * d,
+    });
+  }
+  return kf;
+}
+
+function flLaunch(p, startAt) {
+  const dur = FL.style === 'stars'
+    ? FL.travelMs * (0.8 + Math.random() * 0.4)
+    : FL.travelMs * (1.5 - 0.7 * p.d) * (0.9 + Math.random() * 0.2);   // 遠的泡泡漂得慢
+  const anim = p.node.animate(flKeyframes(p), { duration: dur, easing: 'linear', fill: 'both' });
+  if (startAt) anim.currentTime = dur * startAt;
+  p.anim = anim;
+  anim.onfinish = () => {
+    if (wallStopped || p.anim !== anim) return;
+    if (FL.style === 'bubbles') { p.d = Math.random(); p.node.style.zIndex = String(Math.round(p.d * 100)); }
+    flLaunch(p, 0);
+    // 重新出生時換一張新圖（此時在遠處／畫面外，換圖看不出來）
+    flThumb().then((th) => { if (!th) return; if (wallStopped) { freeCanvas(th.canvas); return; } flSetImage(p, th); });
+  };
+}
+
+function flStarsBg() {
+  const c = el('flStars');
+  const w = window.innerWidth, h = window.innerHeight;
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  const n = Math.round(w * h / (FL.style === 'stars' ? 2500 : 9000));
+  for (let i = 0; i < n; i++) {
+    const r = Math.random() * (FL.style === 'stars' ? 1.3 : 2.2) + 0.2;
+    ctx.fillStyle = `rgba(255,255,255,${(Math.random() * (FL.style === 'stars' ? 0.7 : 0.25) + 0.05).toFixed(2)})`;
+    ctx.beginPath();
+    ctx.arc(Math.random() * w, Math.random() * h, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+async function flBuild() {
+  const field = el('flField');
+  field.classList.add('fade');
+  flParts.forEach((p) => { if (p.anim) p.anim.cancel(); freeCanvas(p.canvas); p.node.remove(); });
+  flParts = [];
+  el('float').classList.toggle('bubbles', FL.style === 'bubbles');
+  field.style.transformStyle = FL.style === 'stars' ? 'preserve-3d' : '';  // 星空要依遠近排序
+  document.documentElement.style.setProperty('--fl-persp', Math.round(Math.max(800, shortSide() * 1.2)) + 'px');
+  flStarsBg();
+  for (let i = 0; i < FL.count; i++) {
+    const th = await flThumb();
+    if (wallStopped) return false;
+    if (!th) break;
+    const node = document.createElement('div');
+    node.className = 'flp';
+    const inner = document.createElement('div');
+    inner.className = 'flp-inner';
+    node.appendChild(inner);
+    field.appendChild(node);
+    const p = { node, inner, canvas: null, anim: null, d: Math.random() };
+    if (FL.style === 'bubbles') node.style.zIndex = String(Math.round(p.d * 100));
+    flSetImage(p, th);
+    flParts.push(p);
+    flLaunch(p, Math.random()); // 隨機進度開始，畫面一開始就是滿的
+  }
+  if (!flParts.length) { showMessage(window.I18N.t('msg.noImages')); return false; }
+  field.classList.remove('fade');
+  return true;
+}
+
+async function flSpotlight() {
+  // 挑一張完全不透明（不在淡入淡出段）、完整在畫面內的；星空挑最大的（越近越大），泡泡隨機
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const cands = [];
+  for (const p of flParts) {
+    if (!p.anim) continue;
+    const prog = (p.anim.currentTime || 0) / p.anim.effect.getTiming().duration;
+    if (prog < 0.18 || prog > 0.85) continue;
+    const r = p.inner.getBoundingClientRect();
+    if (r.width < shortSide() * 0.05 || r.left < 0 || r.top < 0 || r.right > vw || r.bottom > vh) continue;
+    cands.push({ p, w: r.width });
+  }
+  if (!cands.length) return;
+  const p = FL.style === 'stars' ? cands.reduce((a, b) => (b.w > a.w ? b : a)).p : rand(cands).p;
+  flBusy = true;
+  flParts.forEach((q) => q.anim && q.anim.pause());
+  current = { path: p.path, index: 0, nw: p.nw, nh: p.nh };
+  if (infoVisible) updateInfo();
+  const full = await loadFull(p.path);
+  if (full && !wallStopped) {
+    wallHeroImg = full;
+    const dims = heroOpen(full, p.inner, FL.bigScale, FL.style === 'bubbles' ? Math.min(p.w, p.h) / 2 : 6);
+    await sleep(FL.flyMs);
+    if (!wallStopped) {
+      heroSettled();
+      document.body.classList.add('big');
+      if (FL.breathe) el('heroImg').classList.add('breathe');
+      await sleep(FL.bigMs);
+      document.body.classList.remove('big');
+      if (!wallStopped) {
+        heroClose(p.inner, dims);
+        await sleep(FL.flyMs);
+        heroHide();
+      }
+    }
+    wallHeroImg = null;
+  }
+  if (!wallStopped) flParts.forEach((q) => q.anim && q.anim.play());
+  flBusy = false;
+}
+
+async function flLoop() {
+  while (!wallStopped) {
+    if (FL.bigEveryMs <= 0) return;
+    await sleep(FL.bigEveryMs);
+    if (wallStopped) return;
+    await flSpotlight();
+  }
+}
+
+async function floatStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  floatMode = true;
+  wallStopped = false;
+  FL = floatSettings();
+  const r = document.documentElement.style;
+  r.setProperty('--fly-ms', FL.flyMs + 'ms');
+  r.setProperty('--breathe-ms', Math.max(4000, FL.bigMs * 2) + 'ms');
+  document.body.classList.add('float-mode');
+  if (await flBuild()) flLoop();
+}
+
+// ==================== 時間軸模式（Timeline）====================
+// 流程：讀每張照片的拍攝日期（EXIF DateTimeOriginal，沒有就用檔案修改時間）→ 依日期排序 →
+//       一張張播放：照片交叉淡化、大字顯示日期；一側的直式時間軸（年份、月份＋張數）
+//       同步捲動，讓目前這張的位置停在標記點上。
+// 適合家庭相簿。不受「隨機順序」影響；「循環播放」關閉時播到最後一張就結束。
+let timelineMode = false;
+let TL = null;
+let tlList = [];       // { path, t, exif }
+let tlPos = [];        // 每張在時間軸上的 y
+let tlMonthEls = [];   // { key, el }
+let tlShowA = true;
+
+function timelineSettings() {
+  return {
+    order: cfg.tlOrder === 'desc' ? 'desc' : 'asc',
+    holdMs: Math.max(300, num(cfg.tlHoldMs, 4000)),
+    fadeMs: num(cfg.tlFadeMs, 1000),
+    side: cfg.tlSide === 'right' ? 'right' : 'left',
+    kb: cfg.tlKb !== false,
+    showTime: cfg.tlShowTime === true,
+  };
+}
+
+const tlLocale = () => cfg.lang || navigator.language || 'zh-Hant';
+
+async function tlLoadDates() {
+  const m = el('tlMsg');
+  const out = [];
+  const CH = 200;
+  for (let i = 0; i < images.length && !wallStopped; i += CH) {
+    m.textContent = window.I18N.t('timeline.loading', { n: i, total: images.length });
+    const part = images.slice(i, i + CH);
+    let ds = null;
+    try { ds = await window.api.photoDates(part); } catch { ds = null; }
+    part.forEach((p, k) => {
+      const d = ds && ds[k];
+      out.push({ path: p, t: d ? d.t : 0, exif: !!(d && d.exif) });
+    });
+  }
+  m.textContent = '';
+  return out;
+}
+
+// 依排好的清單建立時間軸：年份標籤、月份標籤（含張數）、刻度，並算出每張的 y
+function tlBuildAxis() {
+  const axis = el('tlAxis');
+  axis.innerHTML = '';
+  tlPos = new Array(tlList.length);
+  tlMonthEls = [];
+  const vh = window.innerHeight;
+  const step = Math.max(6, vh * 0.012), monthGap = vh * 0.055, yearGap = vh * 0.1, maxMonth = vh * 0.5;
+  const fy = new Intl.DateTimeFormat(tlLocale(), { year: 'numeric' });
+  const fm = new Intl.DateTimeFormat(tlLocale(), { month: 'long' });
+  // 先算每個月有幾張
+  const counts = new Map();
+  for (const it of tlList) {
+    const d = new Date(it.t), k = d.getFullYear() * 12 + d.getMonth();
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  let y = 0, lastY = null, lastM = null, sp = step;
+  const add = (cls, top, html) => {
+    const e = document.createElement('div');
+    e.className = cls;
+    e.style.top = top.toFixed(1) + 'px';
+    if (html !== undefined) e.innerHTML = html;
+    axis.appendChild(e);
+    return e;
+  };
+  tlList.forEach((it, i) => {
+    const d = new Date(it.t), yr = d.getFullYear(), mk = yr * 12 + d.getMonth();
+    if (yr !== lastY) {
+      if (lastY !== null) y += yearGap * 0.6;
+      add('tl-year', y, fy.format(d));
+      y += yearGap;
+      lastY = yr;
+      lastM = null;
+    }
+    if (mk !== lastM) {
+      if (lastM !== null) y += monthGap * 0.4;
+      const c = counts.get(mk) || 1;
+      add('tl-tick', y);
+      const e = add('tl-month', y, `${fm.format(d)}<small>${c}</small>`);
+      tlMonthEls.push({ key: mk, el: e });
+      sp = Math.min(step, maxMonth / c);      // 一個月照片很多時壓縮間距
+      y += monthGap * 0.6;
+      lastM = mk;
+    }
+    tlPos[i] = y;
+    y += sp;
+  });
+}
+
+function tlScrollTo(i, animate) {
+  const axis = el('tlAxis');
+  const H = el('tlAxisBox').clientHeight;
+  if (!animate) axis.style.transition = 'none';
+  axis.style.transform = `translateY(${(H / 2 - tlPos[i]).toFixed(1)}px)`;
+  if (!animate) { void axis.offsetWidth; axis.style.transition = ''; }
+  const d = new Date(tlList[i].t), mk = d.getFullYear() * 12 + d.getMonth();
+  for (const m of tlMonthEls) m.el.classList.toggle('on', m.key === mk);
+}
+
+function tlDateText(it) {
+  const d = new Date(it.t);
+  const opt = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' };
+  if (TL.showTime) Object.assign(opt, { hour: '2-digit', minute: '2-digit' });
+  let main = '';
+  try { main = new Intl.DateTimeFormat(tlLocale(), opt).format(d); } catch { main = d.toLocaleString(); }
+  const sub = it.exif ? '' : `<small>${window.I18N.t('timeline.fileDate')}</small>`;
+  return main + sub;
+}
+
+// 顯示第 i 張（解碼完成才切換）；成功回傳 true
+async function tlShow(i, first) {
+  const it = tlList[i];
+  const nextImg = el(tlShowA ? 'tlImgB' : 'tlImgA'), curImg = el(tlShowA ? 'tlImgA' : 'tlImgB');
+  nextImg.src = toFileURL(it.path);
+  try { await nextImg.decode(); } catch { nextImg.removeAttribute('src'); return false; }
+  if (wallStopped) return false;
+  nextImg.classList.remove('kb');
+  void nextImg.offsetWidth;
+  if (TL.kb) nextImg.classList.add('kb');
+  nextImg.classList.add('on');
+  curImg.classList.remove('on');
+  setTimeout(() => { if (!curImg.classList.contains('on')) curImg.removeAttribute('src'); }, TL.fadeMs + 50);
+  tlShowA = !tlShowA;
+  const dt = el('tlDate');
+  dt.style.opacity = '0';
+  setTimeout(() => { dt.innerHTML = tlDateText(it); dt.style.opacity = '1'; }, first ? 0 : Math.min(400, TL.fadeMs / 2));
+  tlScrollTo(i, !first);
+  current = { path: it.path, index: i + 1, nw: nextImg.naturalWidth, nh: nextImg.naturalHeight };
+  if (infoVisible) updateInfo();
+  return true;
+}
+
+async function tlLoop() {
+  let i = 0, first = true;
+  while (!wallStopped) {
+    if (i >= tlList.length) {
+      if (!cfg.loop) {
+        showMessage(window.I18N.t('msg.finished'));
+        setTimeout(() => window.api.exitSlideshow(), 1500);
+        return;
+      }
+      i = 0;
+    }
+    const ok = await tlShow(i, first);
+    i++;
+    if (!ok) continue;   // 壞圖跳過
+    first = false;
+    await sleep(TL.holdMs);
+  }
+}
+
+async function timelineStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  timelineMode = true;
+  wallStopped = false;
+  TL = timelineSettings();
+  const vh = window.innerHeight;
+  const r = document.documentElement.style;
+  r.setProperty('--tl-move-ms', Math.max(300, TL.fadeMs) + 'ms');
+  r.setProperty('--tl-fade-ms', TL.fadeMs + 'ms');
+  r.setProperty('--tl-kb-ms', (TL.holdMs + TL.fadeMs * 2) + 'ms');
+  r.setProperty('--tl-year-fs', Math.round(vh * 0.045) + 'px');
+  r.setProperty('--tl-month-fs', Math.round(vh * 0.02) + 'px');
+  r.setProperty('--tl-date-fs', Math.round(vh * 0.04) + 'px');
+  el('tl').classList.toggle('right', TL.side === 'right');
+  r.setProperty('--tl-line-x', TL.side === 'right' ? '30%' : '62%');
+  document.body.classList.add('timeline-mode');
+  tlList = await tlLoadDates();
+  if (wallStopped) return;
+  tlList.sort((a, b) => (TL.order === 'asc' ? a.t - b.t : b.t - a.t) || a.path.localeCompare(b.path));
+  tlBuildAxis();
+  tlLoop();
+}
+
 // 視窗大小改變時重建圖牆（欄寬變了，高度要重算）；輪盤則在下一輪開始前重建
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   if (cfMode) { cfNeedsRebuild = true; return; }
+  if (timelineMode) {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (!wallStopped && tlList.length) { tlBuildAxis(); } }, 400);
+    return;
+  }
+  if (floatMode) {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (!wallStopped && !flBusy) flStarsBg(); }, 400);
+    return;
+  }
   if (canvasMode) { cvNeedsRebuild = true; return; }
   if (mosaicMode) return; // 每一輪都依當下視窗大小重新計算
   if (ringMode) { ringNeedsRebuild = true; return; }
@@ -3149,5 +3559,7 @@ window.api.onConfig(async (config) => {
   else if (cfg.effect === 'book') bookStart();
   else if (cfg.effect === 'mosaic') mosaicStart();
   else if (cfg.effect === 'canvas') canvasStart();
+  else if (cfg.effect === 'float') floatStart();
+  else if (cfg.effect === 'timeline') timelineStart();
   else start();
 });

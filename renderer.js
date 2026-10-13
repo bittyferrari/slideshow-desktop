@@ -103,7 +103,12 @@ async function restoreSettings() {
   restoreWallFields(s, MOSAIC_FIELDS);
   if (typeof s.mosaicOrder === 'string') el('mosaicOrder').value = s.mosaicOrder;
   restoreWallFields(s, CNV_FIELDS);
-  for (const k of ['filmGrain', 'filmShake', 'filmBreathe', 'ringBreathe', 'bookBreathe', 'cnvFrame']) {
+  restoreWallFields(s, FLOAT_FIELDS);
+  if (typeof s.floatStyle === 'string') el('floatStyle').value = s.floatStyle;
+  restoreWallFields(s, TL_FIELDS);
+  if (typeof s.tlOrder === 'string') el('tlOrder').value = s.tlOrder;
+  if (typeof s.tlSide === 'string') el('tlSide').value = s.tlSide;
+  for (const k of ['filmGrain', 'filmShake', 'filmBreathe', 'ringBreathe', 'bookBreathe', 'cnvFrame', 'floatBreathe', 'tlKb', 'tlShowTime', 'pairPortrait']) {
     if (typeof s[k] === 'boolean') el(k).checked = s[k];
   }
   restoreFx(s);
@@ -153,7 +158,7 @@ const REEL_FIELDS = [
 ];
 
 // 非「一般輪播」的播放模式（存檔時 effect 直接記模式名稱）
-const MODES = ['wall', 'reel', 'polaroid', 'coverflow', 'collage', 'filmstrip', 'ring', 'book', 'mosaic', 'canvas'];
+const MODES = ['wall', 'reel', 'polaroid', 'coverflow', 'collage', 'filmstrip', 'ring', 'book', 'mosaic', 'canvas', 'float', 'timeline'];
 
 // ---- 拍立得散落設定（格式同上）----
 const POLA_FIELDS = [
@@ -262,6 +267,24 @@ const CNV_FIELDS = [
   ['cnvReplace', 'cnvReplace', 3, 1],
   ['cnvRadius', 'cnvRadius', 6, 1],
   ['cnvThumbScale', 'cnvThumbScale', 1, 1],
+];
+
+// ---- 漂浮星空／泡泡設定（格式同上）----
+const FLOAT_FIELDS = [
+  ['floatCount', 'floatCount', 30, 1],
+  ['floatSize', 'floatSize', 22, 1],
+  ['floatTravelMs', 'floatTravel', 14000, 1000],
+  ['floatBigEveryMs', 'floatBigEvery', 10000, 1000],
+  ['floatBigMs', 'floatBig', 3000, 1000],
+  ['floatFlyMs', 'floatFly', 1000, 1000],
+  ['floatBigScale', 'floatBigScale', 100, 1],
+  ['floatThumbScale', 'floatThumbScale', 1, 1],
+];
+
+// ---- 時間軸設定（格式同上）----
+const TL_FIELDS = [
+  ['tlHoldMs', 'tlHold', 4000, 1000],
+  ['tlFadeMs', 'tlFade', 1000, 1000],
 ];
 
 // 比例下拉選單：找最接近的選項（存的是 1.333 這類小數）
@@ -399,6 +422,8 @@ function toggleEffectOpts() {
   el('bookOpts').classList.toggle('on', mode === 'book');
   el('mosaicOpts').classList.toggle('on', mode === 'mosaic');
   el('cnvOpts').classList.toggle('on', mode === 'canvas');
+  el('floatOpts').classList.toggle('on', mode === 'float');
+  el('tlOpts').classList.toggle('on', mode === 'timeline');
   el('normalOpts').classList.toggle('off', mode !== 'normal');
   el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
     w.classList.toggle('on', w.dataset.fx === ef);
@@ -491,6 +516,13 @@ el('start').addEventListener('click', async () => {
     bookBreathe: el('bookBreathe').checked,
     mosaicOrder: el('mosaicOrder').value,
     cnvFrame: el('cnvFrame').checked,
+    floatStyle: el('floatStyle').value,
+    floatBreathe: el('floatBreathe').checked,
+    tlOrder: el('tlOrder').value,
+    tlSide: el('tlSide').value,
+    tlKb: el('tlKb').checked,
+    tlShowTime: el('tlShowTime').checked,
+    pairPortrait: el('pairPortrait').checked,
     fx: collectFx(),
     ...collectWallFields(),
     ...collectWallFields(REEL_FIELDS),
@@ -502,6 +534,8 @@ el('start').addEventListener('click', async () => {
     ...collectWallFields(BOOK_FIELDS),
     ...collectWallFields(MOSAIC_FIELDS),
     ...collectWallFields(CNV_FIELDS),
+    ...collectWallFields(FLOAT_FIELDS),
+    ...collectWallFields(TL_FIELDS),
   };
   // 儲存設定，下次開啟時還原
   await window.api.saveSettings(config);
