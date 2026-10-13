@@ -289,17 +289,24 @@
       position: absolute; left: 50%; top: 50%;
       transition: transform var(--cf-move-ms, 800ms) cubic-bezier(.25,.8,.3,1),
                   opacity var(--cf-move-ms, 800ms) ease;
+      will-change: transform, opacity;
+      backface-visibility: hidden;
     }
+    /* 圓角已烤進 canvas，這裡不再用 overflow:hidden 裁切（3D 下那會很貴） */
     .cfi-inner {
       position: relative; width: 100%; height: 100%;
-      border-radius: var(--cf-radius, 8px); overflow: hidden; background: #111;
+      border-radius: var(--cf-radius, 8px);
     }
-    #cf.reflect .cfi {
-      -webkit-box-reflect: below 2px linear-gradient(transparent 62%, rgba(255,255,255,0.22));
-    }
-    .cfi canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .cfi-inner canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
     .cfi-veil {
       position: absolute; inset: 0; background: #000; pointer-events: none; opacity: 0;
+      border-radius: inherit;
+      transition: opacity var(--cf-move-ms, 800ms) ease;
+    }
+    /* 倒影：預先畫好的小 canvas，跟著卡片一起動；側邊變暗改用它自己的 opacity */
+    .cfi-refl {
+      position: absolute; left: 0; top: calc(100% + 2px); width: 100%; height: 38%;
+      display: block; pointer-events: none; user-select: none;
       transition: opacity var(--cf-move-ms, 800ms) ease;
     }
 
@@ -463,6 +470,7 @@
     #cvStage { position: absolute; inset: 0; transition: opacity 700ms ease; }
     #cvStage.fade { opacity: 0; }
     #cvWorld { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+    #cvCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     .cvi {
       position: absolute; left: 0; top: 0;
       border-radius: var(--cnv-radius, 6px); overflow: hidden; background: #111;

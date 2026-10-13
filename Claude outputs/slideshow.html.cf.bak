@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file:; style-src 'unsafe-inline'; script-src 'self'" />
+  <title>Slideshow</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; cursor: none; }
+    body.show-cursor { cursor: default; }
+    #stage { position: fixed; inset: 0; }
+    .slide {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; overflow: hidden;
+    }
+    .slide.in { z-index: 2; }
+    .slide.out { z-index: 1; }
+    .slide img {
+      width: 100%; height: 100%;
+      object-fit: var(--scale-mode, contain);
+      user-select: none; -webkit-user-drag: none;
+    }
+
+    /* 效果類別套在各個 slide 上（而非舞台），
+       且 .in 與 .out 的 img 動畫宣告相同 → 舊圖淡出時動畫無縫延續，不會瞬間跳回。
+
+       所有數值都走 CSS 變數，由 slideshow.js 依「該效果自己的設定」逐張寫進 inline style：
+         slide 元素：--dur（進出場時間）、--ease、--sf/--st（滑動）、--wipe（擦拭）、
+                     --zin（縮放進場）、--czi/--czo（交錯縮放）
+         img  元素：--kb-dur（慢動作時間）、--z0/--z1（起訖縮放）、--pf/--pt（平移）、
+                     --rot（旋轉）、--blur/--fdur（對焦）
+       img 的變數寫在 img 上（不是 slide 上），所以切換時更新 slide 的變數
+       不會干擾舊圖正在跑的慢動作。 */
+
+    /* 無效果：直接切換 */
+    .slide.effect-none.in { opacity: 1; }
+    .slide.effect-none.out { opacity: 0; }
+
+    /* 淡入淡出 */
+    .slide.effect-fade.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-fade.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
+
+    /* 滑動 */
+    .slide.effect-slide.in { animation: slideIn var(--dur, 700ms) var(--ease, ease) both; }
+    .slide.effect-slide.out { animation: slideOut var(--dur, 700ms) var(--ease, ease) both; }
+
+    /* 縮放 */
+    .slide.effect-zoom.in { animation: zoomIn var(--dur, 700ms) var(--ease, ease) both; }
+    .slide.effect-zoom.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease) both; }
+
+    /* 擦拭 */
+    .slide.effect-wipe.in { animation: wipeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-wipe.out { animation: holdThenHide var(--dur, 700ms) linear both; }
+
+    /* Ken Burns（緩慢縮放平移）*/
+    .slide.effect-kenburns.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-kenburns.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-kenburns.in img,
+    .slide.effect-kenburns.out img { animation: kbSlow var(--kb-dur, 6s) linear both; }
+
+    /* 慢速拉遠（Ken Burns 反向）*/
+    .slide.effect-zoomout.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-zoomout.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-zoomout.in img,
+    .slide.effect-zoomout.out img { animation: kbSlow var(--kb-dur, 6s) linear both; }
+
+    /* 慢速平移（畫面緩慢掃過）*/
+    .slide.effect-pan.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-pan.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-pan.in img,
+    .slide.effect-pan.out img { animation: panSlow var(--kb-dur, 6s) linear both; }
+
+    /* 漂移（縮放＋微旋轉，漂浮感）*/
+    .slide.effect-drift.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-drift.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-drift.in img,
+    .slide.effect-drift.out img { animation: driftSlow var(--kb-dur, 6s) linear both; }
+
+    /* 交錯縮放（上一張放大淡出、下一張縮小淡入）*/
+    .slide.effect-crosszoom.in { animation: czIn var(--dur, 700ms) var(--ease, ease-out) both; }
+    .slide.effect-crosszoom.out { animation: czOut var(--dur, 700ms) var(--ease, ease-in) both; }
+    .slide.effect-crosszoom.in img,
+    .slide.effect-crosszoom.out img { animation: kbSlow var(--kb-dur, 6s) linear both; }
+
+    /* 對焦（模糊慢慢變清晰）*/
+    .slide.effect-focus.in { animation: fadeIn var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-focus.out { animation: fadeOut var(--dur, 700ms) var(--ease, ease-in-out) both; }
+    .slide.effect-focus.in img,
+    .slide.effect-focus.out img { animation: focusIn var(--fdur, 2100ms) ease-out both; }
+
+    @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes holdThenHide { 0% { opacity: 1; } 99% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes slideIn  { from { transform: translate(var(--sf, 100%, 0)); opacity: 1; } to { transform: translate(0px, 0px); opacity: 1; } }
+    @keyframes slideOut { from { transform: translate(0px, 0px); opacity: 1; } to { transform: translate(var(--st, -100%, 0)); opacity: 1; } }
+    @keyframes zoomIn   { from { transform: scale(var(--zin, 1.2)); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes wipeIn   { from { clip-path: inset(var(--wipe, 0 100% 0 0)); opacity: 1; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
+    /* Ken Burns / 慢速拉遠 / 交錯縮放共用：由 --z0 → --z1 */
+    @keyframes kbSlow { from { transform: scale(var(--z0, 1)); } to { transform: scale(var(--z1, 1.18)); } }
+    @keyframes panSlow {
+      from { transform: scale(var(--z0, 1.22)) translate(var(--pf, -5%, 0)); }
+      to   { transform: scale(var(--z0, 1.22)) translate(var(--pt, 5%, 0)); }
+    }
+    @keyframes driftSlow {
+      from { transform: scale(var(--z0, 1.06)) rotate(0deg); }
+      to   { transform: scale(var(--z1, 1.16)) rotate(var(--rot, 1.6deg)); }
+    }
+    @keyframes czIn  { from { transform: scale(var(--czi, 0.86)); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes czOut { from { transform: scale(1); opacity: 1; } to { transform: scale(var(--czo, 1.2)); opacity: 0; } }
+    @keyframes focusIn {
+      from { filter: blur(var(--blur, 14px)); transform: scale(var(--z0, 1.06)); }
+      to   { filter: blur(0);                 transform: scale(1); }
+    }
+
+    /* ==================== Pinterest 圖牆模式 ==================== */
+    /* 效能重點（低階機器如 ARM 平板也要順）：
+       1. 磚塊用 <canvas> 縮圖，不放原始大圖 → 記憶體與繪製量降到幾十分之一
+       2. 變暗用「一層全域黑幕」的 opacity，不是每塊磚各自跑 filter: brightness
+       3. 大圖只動 transform（translate + scale），不動 left/top/width/height
+       4. 不長駐 will-change，避免幾十個磚塊各自變成合成層吃光顯示記憶體 */
+    #wall {
+      position: fixed; inset: 0; overflow: hidden;
+      padding: var(--wall-gap, 10px);
+      display: none;
+      background: #000;
+    }
+    body.wall-mode #wall { display: block; }
+    body.wall-mode #stage { display: none; }
+    /* 大圖完全展開後把整面牆藏起來，這段期間不用合成幾十層 */
+    body.big #wall { visibility: hidden; }
+
+    #wallInner { position: absolute; inset: var(--wall-gap, 10px); }
+
+    .tile {
+      position: absolute; left: 0; top: 0;
+      transition: transform var(--push-ms, 700ms) cubic-bezier(.22,.61,.36,1);
+    }
+    .tile-inner {
+      position: relative; width: 100%; height: 100%;
+      border-radius: var(--wall-radius, 10px); overflow: hidden; background: #111;
+      opacity: 0; transform: scale(0.96) translateY(10px);
+      transition: opacity var(--tile-ms, 700ms) ease, transform var(--tile-ms, 700ms) ease;
+    }
+    .tile.shown .tile-inner { opacity: 1; transform: none; }
+    /* 被移除的那張：縮小淡出，同一時間下面的磚塊往上推 */
+    .tile.gone .tile-inner {
+      opacity: 0; transform: scale(0.86);
+      transition: opacity calc(var(--push-ms, 700ms) * 0.6) ease,
+                  transform calc(var(--push-ms, 700ms) * 0.6) ease;
+    }
+    .tile canvas {
+      display: block; width: 100%; height: 100%; object-fit: cover;
+      user-select: none; -webkit-user-drag: none;
+    }
+    /* 每塊磚自己的黑幕：只有被聚焦的那張會用到（慢慢淡掉＝慢慢變亮）*/
+    .tile-veil {
+      position: absolute; inset: 0; background: #000;
+      opacity: 0; pointer-events: none;
+    }
+
+    /* 全域黑幕：整個畫面變暗只靠這一層的 opacity */
+    #dimVeil {
+      position: fixed; inset: 0; background: #000; z-index: 4;
+      opacity: 0; pointer-events: none;
+      transition: opacity var(--dim-ms, 900ms) ease;
+    }
+    #dimVeil.on { opacity: var(--veil, 0.72); }
+
+    /* 被選中的那張：浮到黑幕之上，自己的黑幕慢慢淡掉 */
+    .tile.spot { z-index: 5; }
+    .tile.spot .tile-inner {
+      transform: scale(1.04);
+      transition: transform var(--spot-ms, 1600ms) ease-in-out;
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.35), 0 18px 50px rgba(0,0,0,0.75);
+    }
+    .tile.spot .tile-veil { transition: opacity var(--spot-ms, 1600ms) ease-in-out; }
+
+    /* 大圖層：#heroBox 負責位移縮放（只動 transform），#heroImg 負責呼吸 */
+    /* 只有背後的黑底淡入淡出；大圖本身全程不透明，才看得出是「那張圖被放大」*/
+    #hero { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+    #hero::before {
+      content: ''; position: absolute; inset: 0;
+      background: rgba(0,0,0,0.96);
+      opacity: 0; transition: opacity var(--fly-ms, 900ms) ease;
+    }
+    #hero.on::before { opacity: 1; }
+    #heroBox {
+      position: fixed; left: 0; top: 0; transform-origin: 0 0;
+      visibility: hidden; /* 只在放大期間顯示 */
+      transition: transform var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1),
+                  clip-path var(--fly-ms, 900ms) cubic-bezier(.22,.61,.36,1);
+    }
+    #heroImg {
+      display: block; width: 100%; height: 100%; object-fit: contain;
+      border-radius: 8px; user-select: none; -webkit-user-drag: none;
+    }
+    #heroImg.breathe { animation: heroBreathe var(--breathe-ms, 12s) ease-in-out infinite alternate; }
+    @keyframes heroBreathe { from { transform: scale(1); } to { transform: scale(calc(1 + 0.02 * var(--i, 2))); } }
+
+    /* ==================== 輪盤模式（水平或垂直）==================== */
+    /* 一排圖片左右（或上下）排列、整條軌道平移循環 → 減速停在正中間那張 → 放大。
+       每一幀只改 #reelTrack 的 transform；變暗用軌道內單一黑幕。 */
+    #reel { position: fixed; inset: 0; overflow: hidden; background: #000; display: none; }
+    body.reel-mode #reel { display: block; }
+    body.reel-mode #stage { display: none; }
+    body.big #reel { visibility: hidden; }
+    #reelTrack {
+      position: absolute; left: 0; top: 0;
+      will-change: transform;
+      transition: opacity 450ms ease;
+    }
+    #reelTrack.fade { opacity: 0; }
+    .rtile { position: absolute; top: 0; }
+    .rtile-inner {
+      width: 100%; height: 100%;
+      border-radius: var(--reel-radius, 16px); overflow: hidden; background: #111;
+      transition: opacity 450ms ease, transform 450ms ease;
+    }
+    .rtile canvas {
+      display: block; width: 100%; height: 100%;
+      user-select: none; -webkit-user-drag: none;
+    }
+    /* 換圖：原地縮小淡出 → 換內容 → 淡入 */
+    .rtile.swap .rtile-inner { opacity: 0; transform: scale(0.9); }
+    /* 停下後其他圖變暗（黑幕在軌道裡，被選中那張 z-index 較高浮在上面）*/
+    #reelVeil {
+      position: absolute; left: -100vw; right: -100vw; top: -100vh; bottom: -100vh;
+      background: #000; z-index: 4; opacity: 0; pointer-events: none;
+      transition: opacity var(--dim-ms, 500ms) ease;
+    }
+    #reelVeil.on { opacity: var(--veil, 0.65); }
+    .rtile.spot { z-index: 5; }
+    .rtile.spot .rtile-inner {
+      transform: scale(1.06);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.4), 0 18px 50px rgba(0,0,0,0.75);
+      transition: transform var(--spot-ms, 800ms) ease-in-out, box-shadow var(--spot-ms, 800ms) ease-in-out;
+    }
+
+    /* ==================== 拍立得散落模式 ==================== */
+    /* 白框照片一張張丟到桌面疊起來；全部只動 transform / opacity。
+       落地後陰影固定不再變動，桌上只有「正在落下」那一張在跑動畫。 */
+    #pola {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: radial-gradient(ellipse at 50% 45%, #3a3128 0%, #241e18 55%, #120f0c 100%);
+    }
+    body.polaroid-mode #pola { display: block; }
+    body.polaroid-mode #stage { display: none; }
+    #polaPile {
+      position: absolute; inset: 0;
+      transition: opacity var(--pola-fade-ms, 1200ms) ease, transform var(--pola-fade-ms, 1200ms) ease;
+    }
+    #polaPile.clear { opacity: 0; transform: scale(0.94) translateY(4vh); }
+    .pola {
+      position: absolute; left: 0; top: 0;
+      background: #f7f5ef; border-radius: 3px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.35), 0 10px 26px rgba(0,0,0,0.45);
+      transform-origin: 50% 50%;
+    }
+    .pola .lift {
+      position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+      box-shadow: 0 30px 70px rgba(0,0,0,0.45);
+    }
+    .pola canvas { position: absolute; display: block; background: #222; user-select: none; -webkit-user-drag: none; }
+    .pola .cap {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #3a3a46; font-family: "Segoe Print", "Comic Sans MS", "Microsoft JhengHei", cursive;
+      white-space: nowrap; overflow: hidden; padding: 0 8%;
+    }
+    .pola .cap span { overflow: hidden; text-overflow: ellipsis; }
+
+    /* ==================== 3D 封面流模式 ==================== */
+    /* 舞台設 perspective，每張只改 transform（translate3d + rotateY）並用 transition 補間；
+       側邊變暗靠每張自己的黑幕 opacity，不用 filter。 */
+    #cf {
+      position: fixed; inset: 0; overflow: hidden; display: none; background: #000;
+    }
+    body.coverflow-mode #cf { display: block; }
+    body.coverflow-mode #stage { display: none; }
+    body.big #cf { visibility: hidden; }
+    /* perspective 要設在卡片的「直接父層」才會生效 */
+    #cfStage {
+      position: absolute; inset: 0; transition: opacity 450ms ease;
+      perspective: var(--cf-persp, 1400px); perspective-origin: 50% 50%;
+    }
+    #cfStage.fade { opacity: 0; }
+    .cfi {
+      position: absolute; left: 50%; top: 50%;
+      transition: transform var(--cf-move-ms, 800ms) cubic-bezier(.25,.8,.3,1),
+                  opacity var(--cf-move-ms, 800ms) ease;
+    }
+    .cfi-inner {
+      position: relative; width: 100%; height: 100%;
+      border-radius: var(--cf-radius, 8px); overflow: hidden; background: #111;
+    }
+    #cf.reflect .cfi {
+      -webkit-box-reflect: below 2px linear-gradient(transparent 62%, rgba(255,255,255,0.22));
+    }
+    .cfi canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .cfi-veil {
+      position: absolute; inset: 0; background: #000; pointer-events: none; opacity: 0;
+      transition: opacity var(--cf-move-ms, 800ms) ease;
+    }
+
+    /* ==================== 拼貼格模式 ==================== */
+    /* 2～5 格不對稱版型；每隔幾秒只換其中一格（新圖層蓋上去做轉場），版型定期整個換掉。
+       每格：.ccell（定位）→ .ccell-inner（裁切＋圓角）→ .clayer（轉場用）→ canvas（慢速縮放用）。 */
+    #collage { position: fixed; inset: 0; overflow: hidden; display: none; background: #000; }
+    body.collage-mode #collage { display: block; }
+    body.collage-mode #stage { display: none; }
+    #collageBox { position: absolute; inset: 0; transition: opacity 600ms ease; }
+    #collageBox.fade { opacity: 0; }
+    .ccell { position: absolute; opacity: 0; transform: scale(0.97); transition: opacity 600ms ease, transform 600ms ease; }
+    .ccell.shown { opacity: 1; transform: none; }
+    .ccell-inner { position: absolute; inset: 0; overflow: hidden; border-radius: var(--cc-radius, 12px); background: #111; }
+    .clayer { position: absolute; inset: 0; overflow: hidden; }
+    .clayer canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .clayer canvas.kb { animation: ccKb var(--cc-kb-ms, 24s) ease-in-out infinite alternate; }
+    @keyframes ccKb { from { transform: scale(1); } to { transform: scale(1.08); } }
+
+    /* ==================== 電影膠卷模式 ==================== */
+    /* 底片（含齒孔、格線、編號）每格預先畫進一張 canvas；整條只動 #filmTrack 的 transform
+       （Web Animations，交給合成器）。顆粒、晃動、暗角都是獨立的合成層動畫，不重繪。 */
+    #film { position: fixed; inset: 0; overflow: hidden; display: none; background: #0b0a09; }
+    body.film-mode #film { display: block; }
+    body.film-mode #stage { display: none; }
+    body.big #film { visibility: hidden; }
+    #filmWrap { position: absolute; left: 0; right: 0; top: 50%; }
+    #filmWrap.shake { animation: filmShake 0.5s steps(1) infinite; }
+    @keyframes filmShake {
+      0% { translate: 0 0; } 20% { translate: 0.6px -1px; } 40% { translate: -0.5px 0.8px; }
+      60% { translate: 0.3px 0.3px; } 80% { translate: -0.7px -0.6px; }
+    }
+    #filmTrack { position: absolute; left: 0; top: 0; will-change: transform; }
+    .fframe { position: absolute; top: 0; }
+    .fframe canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .fframe .fhole { position: absolute; pointer-events: none; }
+    #filmFx { position: fixed; inset: 0; pointer-events: none; z-index: 7; display: none; overflow: hidden; }
+    body.film-mode #filmFx { display: block; }
+    #filmFx .vig { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.55) 100%); }
+    #filmFx.flicker .vig { animation: filmFlicker 0.27s steps(1) infinite; }
+    @keyframes filmFlicker { 0% { opacity: 1; } 33% { opacity: 0.86; } 66% { opacity: 0.95; } }
+    #filmGrain {
+      position: absolute; left: -64px; top: -64px; transform-origin: 0 0;
+      image-rendering: pixelated; opacity: 0.09; display: none;
+      animation: filmGrainMove 0.6s steps(1) infinite;
+    }
+    #filmFx.grain #filmGrain { display: block; }
+    @keyframes filmGrainMove {
+      0% { translate: 0 0; } 17% { translate: -23px 11px; } 33% { translate: 14px -19px; }
+      50% { translate: -9px -31px; } 67% { translate: 27px 7px; } 83% { translate: -17px 25px; }
+    }
+    #heroImg.tone-sepia { filter: sepia(0.65) contrast(1.05); }
+    #heroImg.tone-bw { filter: grayscale(1) contrast(1.08); }
+
+    /* ==================== 3D 旋轉相簿模式（旋轉木馬／立方體）==================== */
+    /* #ringStage 設 perspective（必須是 #ringRot 的直接父層）；#ringRot 用 preserve-3d，
+       整個環／立方體只改 #ringRot 一個 transform，由 transition 補間。
+       背面變暗用每面自己的黑幕 opacity。 */
+    #ring {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: radial-gradient(ellipse at 50% 40%, #1c2130 0%, #0a0b10 65%, #050507 100%);
+    }
+    body.ring-mode #ring { display: block; }
+    body.ring-mode #stage { display: none; }
+    body.big #ring { visibility: hidden; }
+    #ringStage {
+      position: absolute; inset: 0; transition: opacity 500ms ease;
+      perspective: var(--ring-persp, 1600px); perspective-origin: 50% 50%;
+    }
+    #ringStage.fade { opacity: 0; }
+    #ringRot {
+      position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+      transform-style: preserve-3d;
+      transition: transform var(--ring-move-ms, 1400ms) cubic-bezier(.45,0,.25,1);
+    }
+    .rface { position: absolute; left: 0; top: 0; }
+    #ring.cube .rface { backface-visibility: hidden; }
+    .rface-inner {
+      position: relative; width: 100%; height: 100%; overflow: hidden;
+      border-radius: var(--ring-radius, 10px); background: #111;
+    }
+    .rface-content { position: absolute; inset: 0; }
+    .rface-content canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .rface-veil {
+      position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none;
+      transition: opacity var(--ring-move-ms, 1400ms) ease-in-out;
+    }
+
+    /* ==================== 翻頁書模式 ==================== */
+    /* 左右兩頁靜止；翻頁時建立一張「葉子」（正面＝目前右頁、背面＝下一個左頁），
+       以書脊為軸 rotateY(0 → -180deg)。perspective 設在葉子的直接父層 #bookSpread。 */
+    #book {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: radial-gradient(ellipse at 50% 45%, #3b2f25 0%, #241c15 60%, #120e0a 100%);
+    }
+    body.book-mode #book { display: block; }
+    body.book-mode #stage { display: none; }
+    body.big #book { visibility: hidden; }
+    #bookSpread {
+      position: absolute; left: 50%; top: 50%;
+      perspective: var(--book-persp, 2400px); perspective-origin: 50% 50%;
+      transition: opacity 500ms ease;
+    }
+    #bookSpread.fade { opacity: 0; }
+    #bookSpread::before {
+      content: ''; position: absolute; left: 2%; right: 2%; top: 3%; bottom: -3%;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.6); border-radius: 6px;
+    }
+    .bpage {
+      position: absolute; top: 0; overflow: hidden;
+      background: var(--book-paper, #f2ede1);
+    }
+    .bpage.left { border-radius: 6px 0 0 6px; box-shadow: -2px 2px 0 var(--book-edge1, #ddd6c6), -4px 4px 0 var(--book-edge2, #c9c1b0); }
+    .bpage.right { border-radius: 0 6px 6px 0; box-shadow: 2px 2px 0 var(--book-edge1, #ddd6c6), 4px 4px 0 var(--book-edge2, #c9c1b0); }
+    .bpage canvas {
+      position: absolute; display: block; user-select: none; -webkit-user-drag: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    }
+    .bpage .bspine, .bpage .bshade, .bpage .bcast { position: absolute; inset: 0; pointer-events: none; }
+    .bpage.left .bspine { background: linear-gradient(to left, rgba(0,0,0,0.28), rgba(0,0,0,0.08) 6%, transparent 14%); }
+    .bpage.right .bspine { background: linear-gradient(to right, rgba(0,0,0,0.28), rgba(0,0,0,0.08) 6%, transparent 14%); }
+    .bpage .bshade { background: #000; opacity: 0; }
+    .bpage .bcast { opacity: 0; }
+    .bpage.right .bcast { background: linear-gradient(to right, rgba(0,0,0,0.55), rgba(0,0,0,0.1) 60%, transparent); }
+    .bpage.left .bcast { background: linear-gradient(to left, rgba(0,0,0,0.55), rgba(0,0,0,0.1) 60%, transparent); }
+    .bleaf { position: absolute; top: 0; transform-style: preserve-3d; transform-origin: 0 50%; }
+    .bleaf .bpage { left: 0; backface-visibility: hidden; box-shadow: none; }
+    .bleaf .bpage.back { transform: rotateY(180deg); }
+
+    /* ==================== 馬賽克組合模式 ==================== */
+    /* 一張 canvas 畫滿小縮圖拼成大圖（鏡頭由近拉遠），最後原圖淡入。
+       canvas 只在拼的過程中重畫；拉遠只動 canvas 的 transform。 */
+    #mosaic { position: fixed; inset: 0; overflow: hidden; display: none; background: #000; transition: opacity 600ms ease; }
+    #mosaic.fade { opacity: 0; }
+    body.mosaic-mode #mosaic { display: block; }
+    body.mosaic-mode #stage { display: none; }
+    #mosaicCanvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+    #mosaicImg {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: var(--mosaic-fit, contain); opacity: 0; pointer-events: none;
+      transition: opacity var(--mosaic-reveal-ms, 2000ms) ease-in-out;
+      user-select: none; -webkit-user-drag: none;
+    }
+    #mosaicImg.on { opacity: 1; }
+    #mosaicImg:not([src]) { display: none; }
+    #mosaicMsg {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      color: #888; font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; font-size: 18px;
+    }
+
+    /* ==================== 無限畫布漫遊模式 ==================== */
+    /* 照片散布在一大張「世界」上；鏡頭只是 #cvWorld 的 transform：
+       translate(畫面中心) scale(s) translate(−x, −y)。飛行時用多個關鍵影格
+       （位置 ease-in-out、縮放先拉遠再拉近，對數內插），交給合成器跑。 */
+    #cnv {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: radial-gradient(ellipse at 50% 50%, #181a22 0%, #0b0c10 70%, #060609 100%);
+    }
+    body.canvas-mode #cnv { display: block; }
+    body.canvas-mode #stage { display: none; }
+    #cvStage { position: absolute; inset: 0; transition: opacity 700ms ease; }
+    #cvStage.fade { opacity: 0; }
+    #cvWorld { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+    .cvi {
+      position: absolute; left: 0; top: 0;
+      border-radius: var(--cnv-radius, 6px); overflow: hidden; background: #111;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+    }
+    #cnv.frame .cvi { background: #f4f2ec; padding: var(--cnv-pad, 12px); border-radius: 3px; }
+    .cvi-pic { position: relative; width: 100%; height: 100%; overflow: hidden; }
+    .cvi-pic canvas, .cvi-pic img {
+      position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover;
+      user-select: none; -webkit-user-drag: none;
+    }
+    .cvi-pic img { opacity: 0; transition: opacity 400ms ease; }
+    .cvi-pic img.on { opacity: 1; }
+
+    /* ==================== 一般模式：直式照片兩張並排 ==================== */
+    .slide .img2 { display: none; }
+    .slide.pair { gap: var(--pair-gap, 16px); }
+    .slide.pair img { width: calc(50% - var(--pair-gap, 16px) / 2); }
+    .slide.pair .img2 { display: block; }
+
+    /* ==================== 漂浮星空／泡泡模式 ==================== */
+    /* 每張縮圖一個 Web Animations 動畫（只動 transform / opacity），交給合成器；
+       星空：由遠往近飛過（#flField 設 perspective，粒子在 3D 中移動）；泡泡：由下往上漂、左右擺。 */
+    #float {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: radial-gradient(ellipse at 50% 50%, #10162a 0%, #070912 60%, #020205 100%);
+    }
+    #float.bubbles { background: linear-gradient(180deg, #0d3a52 0%, #0a2235 55%, #06121e 100%); }
+    body.float-mode #float { display: block; }
+    body.float-mode #stage { display: none; }
+    body.big #float { visibility: hidden; }
+    #flStars { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #flField { position: absolute; inset: 0; perspective: var(--fl-persp, 900px); perspective-origin: 50% 50%; transition: opacity 600ms ease; }
+    #flField.fade { opacity: 0; }
+    .flp { position: absolute; left: 50%; top: 50%; opacity: 0; }
+    .flp-inner { width: 100%; height: 100%; overflow: hidden; border-radius: 6px; background: #111; box-shadow: 0 6px 24px rgba(0,0,0,0.5); }
+    .flp canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    #float.bubbles .flp-inner {
+      border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,0.35), 0 8px 30px rgba(0,0,0,0.35); position: relative;
+    }
+    #float.bubbles .flp-inner::after {
+      content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle at 32% 26%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.12) 18%, transparent 40%),
+                  radial-gradient(circle at 50% 50%, transparent 62%, rgba(255,255,255,0.18) 100%);
+    }
+
+    /* ==================== 時間軸模式 ==================== */
+    /* 左（或右）側是一條直的時間軸：年份、月份標籤；整條只動 transform 捲到目前日期。
+       另一側是目前照片（兩層 <img> 交叉淡化）＋大字日期。 */
+    #tl {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: linear-gradient(135deg, #15171c 0%, #0c0d10 100%);
+      font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; color: #e8e8ec;
+    }
+    body.timeline-mode #tl { display: block; }
+    body.timeline-mode #stage { display: none; }
+    #tlAxisBox {
+      position: absolute; top: 0; bottom: 0; left: 0; width: var(--tl-axis-w, 22vw); overflow: hidden;
+      -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent);
+      mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent);
+    }
+    #tl.right #tlAxisBox { left: auto; right: 0; }
+    #tlAxis { position: absolute; left: 0; right: 0; top: 0; transition: transform var(--tl-move-ms, 1000ms) cubic-bezier(.45,0,.25,1); }
+    #tlAxis::before {
+      content: ''; position: absolute; top: -100vh; bottom: -100vh; left: var(--tl-line-x, 62%); width: 2px;
+      background: rgba(255,255,255,0.18);
+    }
+    .tl-year {
+      position: absolute; right: calc(100% - var(--tl-line-x, 62%) + 22px); transform: translateY(-50%);
+      font-size: var(--tl-year-fs, 44px); font-weight: 700; color: #f2d48a; letter-spacing: 1px; white-space: nowrap;
+    }
+    .tl-month {
+      position: absolute; right: calc(100% - var(--tl-line-x, 62%) + 22px); transform: translateY(-50%);
+      font-size: var(--tl-month-fs, 20px); color: rgba(255,255,255,0.55); white-space: nowrap;
+      transition: color 400ms ease, font-size 400ms ease;
+    }
+    .tl-month small { font-size: 0.7em; color: rgba(255,255,255,0.35); margin-left: 6px; }
+    .tl-month.on { color: #fff; font-weight: 600; }
+    .tl-tick {
+      position: absolute; left: calc(var(--tl-line-x, 62%) - 5px); width: 12px; height: 2px; transform: translateY(-50%);
+      background: rgba(255,255,255,0.35);
+    }
+    #tlMarker {
+      position: absolute; top: 50%; left: calc(var(--tl-line-x, 62%) - 8px); width: 18px; height: 18px; margin-top: -9px;
+      border-radius: 50%; background: #f2d48a; box-shadow: 0 0 0 5px rgba(242,212,138,0.25), 0 0 18px rgba(242,212,138,0.6);
+    }
+    #tlMarker::after {
+      content: ''; position: absolute; left: 22px; top: 8px; width: calc(var(--tl-axis-w, 22vw) * 0.38 - 30px); height: 2px;
+      background: linear-gradient(90deg, rgba(242,212,138,0.7), transparent);
+    }
+    #tl.right #tlMarker::after { left: auto; right: 22px; background: linear-gradient(270deg, rgba(242,212,138,0.7), transparent); }
+    #tlView { position: absolute; top: 0; bottom: 0; left: var(--tl-axis-w, 22vw); right: 0; }
+    #tl.right #tlView { left: 0; right: var(--tl-axis-w, 22vw); }
+    .tl-photo {
+      position: absolute; left: 3%; right: 4%; top: 5%; bottom: 17%; width: 94%; height: 78%;
+      object-fit: contain; opacity: 0; transition: opacity var(--tl-fade-ms, 1000ms) ease-in-out;
+      filter: drop-shadow(0 14px 30px rgba(0,0,0,0.6)); user-select: none; -webkit-user-drag: none;
+    }
+    .tl-photo:not([src]) { display: none; }
+    .tl-photo.on { opacity: 1; }
+    .tl-photo.kb { animation: tlKb var(--tl-kb-ms, 8s) ease-out both; }
+    @keyframes tlKb { from { transform: scale(1); } to { transform: scale(1.05); } }
+    #tlDate {
+      position: absolute; left: 0; right: 0; bottom: 5%; text-align: center;
+      font-size: var(--tl-date-fs, 40px); font-weight: 600; letter-spacing: 1px; text-shadow: 0 2px 10px rgba(0,0,0,0.6);
+      transition: opacity 400ms ease;
+    }
+    #tlDate small { display: block; font-size: 0.5em; font-weight: 400; color: rgba(255,255,255,0.55); margin-top: 6px; }
+    #tlMsg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #888; font-size: 18px; }
+
+    /* 圖片資訊面板（移動滑鼠時顯示）*/
+    #info {
+      position: fixed; left: 24px; bottom: 24px; max-width: 70vw; z-index: 10;
+      background: rgba(0,0,0,0.65); color: #eee;
+      font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+      padding: 24px 32px; border-radius: 16px;
+      opacity: 0; transition: opacity 0.25s; pointer-events: none;
+      backdrop-filter: blur(4px);
+    }
+    #info.visible { opacity: 1; }
+    #info .name { font-size: 45px; font-weight: 600; margin-bottom: 12px; }
+    #info .path { font-size: 36px; color: #b8b8c0; word-break: break-all; }
+    #info .meta { font-size: 36px; color: #8fb8e8; margin-top: 12px; }
+
+    #hint {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.75); font-family: "Microsoft JhengHei", sans-serif;
+      font-size: 14px; background: rgba(0,0,0,0.5); padding: 8px 16px;
+      border-radius: 20px; transition: opacity 0.6s; pointer-events: none; z-index: 11;
+    }
+    #hint.hidden { opacity: 0; }
+    #msg {
+      position: fixed; inset: 0; display: flex; align-items: center;
+      justify-content: center; color: #888; font-family: sans-serif; font-size: 18px; z-index: 12;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div class="slide" id="slideA"><img id="imgA" /><img class="img2" /></div>
+    <div class="slide" id="slideB"><img id="imgB" /><img class="img2" /></div>
+  </div>
+  <div id="wall"><div id="wallInner"></div></div>
+  <div id="reel"><div id="reelTrack"><div id="reelVeil"></div></div></div>
+  <div id="pola"><div id="polaPile"></div></div>
+  <div id="cf"><div id="cfStage"></div></div>
+  <div id="collage"><div id="collageBox"></div></div>
+  <div id="film"><div id="filmWrap"><div id="filmTrack"></div></div></div>
+  <div id="filmFx"><canvas id="filmGrain"></canvas><div class="vig"></div></div>
+  <div id="ring"><div id="ringStage"><div id="ringRot"></div></div></div>
+  <div id="book"><div id="bookSpread"></div></div>
+  <div id="mosaic"><canvas id="mosaicCanvas"></canvas><img id="mosaicImg" /><div id="mosaicMsg"></div></div>
+  <div id="cnv"><div id="cvStage"><div id="cvWorld"></div></div></div>
+  <div id="float"><canvas id="flStars"></canvas><div id="flField"></div></div>
+  <div id="tl">
+    <div id="tlAxisBox"><div id="tlAxis"></div><div id="tlMarker"></div></div>
+    <div id="tlView"><img class="tl-photo" id="tlImgA" /><img class="tl-photo" id="tlImgB" /><div id="tlDate"></div></div>
+    <div id="tlMsg"></div>
+  </div>
+  <div id="dimVeil"></div>
+  <div id="hero"><div id="heroBox"><img id="heroImg" /></div></div>
+  <div id="info">
+    <div class="name" id="info-name"></div>
+    <div class="path" id="info-path"></div>
+    <div class="meta" id="info-meta"></div>
+  </div>
+  <div id="hint" data-i18n="hint.slideshow">點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片資訊</div>
+  <div id="msg" style="display:none"></div>
+  <script src="i18n.js"></script>
+  <script src="fx.js"></script>
+  <script src="slideshow.js"></script>
+</body>
+</html>

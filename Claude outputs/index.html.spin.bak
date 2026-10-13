@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self'" />
+  <title>Slideshow 設定</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
+      background: #1e1e24;
+      color: #e8e8ec;
+      padding: 24px 24px 96px;
+    }
+    h1 { font-size: 22px; margin: 0 0 20px; font-weight: 600; }
+    .field { margin-bottom: 18px; }
+    label { display: block; font-size: 14px; margin-bottom: 6px; color: #b8b8c0; }
+    .dir-row { display: flex; gap: 8px; }
+    input[type="text"], input[type="number"] {
+      width: 100%; padding: 9px 11px; border-radius: 8px;
+      border: 1px solid #3a3a44; background: #2a2a32; color: #e8e8ec;
+      font-size: 15px;
+    }
+    input[readonly] { color: #9a9aa4; }
+    select {
+      width: 100%; padding: 9px 11px; border-radius: 8px;
+      border: 1px solid #3a3a44; background: #2a2a32; color: #e8e8ec;
+      font-size: 15px;
+    }
+    button {
+      border: none; border-radius: 8px; cursor: pointer;
+      font-size: 15px; padding: 9px 16px; font-weight: 500;
+    }
+    .btn-secondary { background: #3a3a44; color: #e8e8ec; white-space: nowrap; }
+    .btn-secondary:hover { background: #45454f; }
+    .btn-primary {
+      background: #5b7cfa; color: #fff; width: 100%;
+      padding: 13px; font-size: 16px;
+    }
+    .btn-primary:hover { background: #6d8bff; }
+    .btn-primary:disabled { background: #3a3a44; color: #777; cursor: not-allowed; }
+    .checks { display: flex; flex-direction: column; gap: 10px; }
+    .check-row { display: flex; align-items: center; gap: 9px; }
+    .check-row input { width: 17px; height: 17px; accent-color: #5b7cfa; }
+    .check-row label { margin: 0; font-size: 15px; color: #e8e8ec; }
+    .hint { font-size: 13px; color: #7a7a84; margin-top: 6px; }
+    .count { font-size: 13px; color: #6ec26e; margin-top: 6px; min-height: 17px; }
+    .inline { display: flex; align-items: center; gap: 8px; }
+    .inline input[type="number"] { width: 90px; }
+    .inline span { font-size: 14px; color: #b8b8c0; }
+    /* 細部設定區塊（僅在選到對應效果時顯示）*/
+    #wallOpts { display: none; margin-top: -6px; }
+    #wallOpts.on { display: block; }
+    #reelOpts { display: none; margin-top: -6px; }
+    #reelOpts.on { display: block; }
+    #polaOpts, #cfOpts { display: none; margin-top: -6px; }
+    #polaOpts.on, #cfOpts.on { display: block; }
+    #collageOpts, #filmOpts { display: none; margin-top: -6px; }
+    #collageOpts.on, #filmOpts.on { display: block; }
+    #ringOpts, #bookOpts { display: none; margin-top: -6px; }
+    #ringOpts.on, #bookOpts.on { display: block; }
+    #mosaicOpts, #cnvOpts { display: none; margin-top: -6px; }
+    #mosaicOpts.on, #cnvOpts.on { display: block; }
+    #floatOpts, #tlOpts { display: none; margin-top: -6px; }
+    #floatOpts.on, #tlOpts.on { display: block; }
+    #normalOpts.off { display: none; }
+    #fxOpts { margin-top: -6px; }
+    .fxPanel { display: none; margin-bottom: 18px; }
+    .fxPanel.on { display: block; }
+    .sub {
+      border: 1px solid #33333d; border-radius: 10px;
+      padding: 14px 14px 4px; background: #23232b;
+    }
+    .sub .title { font-size: 14px; color: #9aa4c0; margin-bottom: 12px; font-weight: 600; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
+    .grid2 .field { margin-bottom: 14px; }
+    .grid2 label { font-size: 13px; }
+    .grid2 input[type="number"] { width: 78px; }
+    /* 固定在底部的開始播放列 */
+    .footer {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      padding: 12px 24px 14px;
+      background: rgba(30, 30, 36, 0.96);
+      border-top: 1px solid #33333d;
+      box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.35);
+      z-index: 10;
+    }
+    .footer .hint { display: none; }
+  </style>
+</head>
+<body data-i18n-title="window.settings">
+  <h1 data-i18n="app.title">🖼️ Slideshow 設定</h1>
+
+  <div class="field">
+    <label data-i18n="field.language">語言</label>
+    <select id="lang"></select>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.dir">圖片目錄</label>
+    <div class="dir-row">
+      <input type="text" id="dir" readonly data-i18n-placeholder="placeholder.dir" placeholder="尚未選擇目錄…" />
+      <button class="btn-secondary" id="pick" data-i18n="btn.pick">選擇…</button>
+    </div>
+    <div class="count" id="count"></div>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.scaleMode">縮放模式</label>
+    <select id="scaleMode">
+      <option value="contain" selected data-i18n="scale.contain">符合畫面（Fit）</option>
+      <option value="cover" data-i18n="scale.cover">填滿畫面（裁切）</option>
+      <option value="fill" data-i18n="scale.fill">拉伸填滿</option>
+      <option value="none" data-i18n="scale.none">原始大小（置中）</option>
+      <option value="scale-down" data-i18n="scale.scale-down">縮小至符合（不放大）</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.mode">播放模式</label>
+    <select id="mode">
+      <option value="normal" selected data-i18n="mode.normal">一般輪播</option>
+      <option value="wall" data-i18n="effect.wall">Pinterest 圖牆（多圖 + 聚焦大圖）</option>
+      <option value="reel" data-i18n="effect.reel">輪盤（平移 → 停在一張放大）</option>
+      <option value="polaroid" data-i18n="effect.polaroid">拍立得散落</option>
+      <option value="coverflow" data-i18n="effect.coverflow">3D 封面流</option>
+      <option value="collage" data-i18n="effect.collage">拼貼格</option>
+      <option value="filmstrip" data-i18n="effect.filmstrip">電影膠卷</option>
+      <option value="ring" data-i18n="effect.ring">3D 旋轉相簿</option>
+      <option value="book" data-i18n="effect.book">翻頁書</option>
+      <option value="mosaic" data-i18n="effect.mosaic">馬賽克組合</option>
+      <option value="canvas" data-i18n="effect.canvas">無限畫布漫遊</option>
+      <option value="float" data-i18n="effect.float">漂浮星空／泡泡</option>
+      <option value="timeline" data-i18n="effect.timeline">時間軸</option>
+    </select>
+  </div>
+
+  <!-- 一般輪播專用：切換間隔、切換效果與其設定 -->
+  <div id="normalOpts">
+  <div class="field">
+    <label data-i18n="field.interval">切換間隔</label>
+    <div class="inline">
+      <input type="number" id="interval" min="0.5" step="0.5" value="4" />
+      <span data-i18n="unit.seconds">秒</span>
+    </div>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.effect">切換效果</label>
+    <select id="effect">
+      <option value="fade" selected data-i18n="effect.fade">淡入淡出</option>
+      <option value="slide" data-i18n="effect.slide">滑動</option>
+      <option value="zoom" data-i18n="effect.zoom">縮放</option>
+      <option value="wipe" data-i18n="effect.wipe">擦拭</option>
+      <option value="kenburns" data-i18n="effect.kenburns">Ken Burns（緩慢縮放平移）</option>
+      <option value="zoomout" data-i18n="effect.zoomout">慢速拉遠</option>
+      <option value="pan" data-i18n="effect.pan">慢速平移</option>
+      <option value="drift" data-i18n="effect.drift">漂移（縮放＋微旋轉）</option>
+      <option value="crosszoom" data-i18n="effect.crosszoom">交錯縮放</option>
+      <option value="focus" data-i18n="effect.focus">對焦（模糊變清晰）</option>
+      <option value="random" data-i18n="effect.random">隨機</option>
+      <option value="none" data-i18n="effect.none">無</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <div class="check-row">
+      <input type="checkbox" id="pairPortrait" />
+      <label for="pairPortrait" data-i18n="opt.pair">直式照片兩張並排</label>
+    </div>
+    <div class="hint" data-i18n="opt.pairHint"></div>
+  </div>
+
+  <!-- 各切換效果的專屬設定（由 renderer.js 依 fx.js 的定義動態產生，只顯示目前選到的效果）-->
+  <div id="fxOpts"></div>
+  </div>
+
+  <div id="wallOpts">
+    <div class="sub">
+      <div class="title" data-i18n="wall.section">圖牆設定</div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="wall.cols">欄數（0＝自動）</label>
+        <div class="inline">
+          <input type="number" id="wallCols" min="0" max="10" step="1" value="6" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.rows">每欄張數</label>
+        <div class="inline">
+          <input type="number" id="wallRows" min="1" max="20" step="1" value="8" />
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <label data-i18n="wall.swap">換圖方式</label>
+        <select id="wallSwapMode">
+          <option value="push" selected data-i18n="swap.push">往上推（移除→下面補位→底部進新圖）</option>
+          <option value="fade" data-i18n="swap.fade">原地淡出淡入</option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.pushMs">往上推的時間</label>
+        <div class="inline">
+          <input type="number" id="wallPush" min="0.1" max="5" step="0.1" value="4" />
+          <span data-i18n="unit.seconds">秒</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.thumb">縮圖畫質倍率</label>
+        <div class="inline">
+          <input type="number" id="wallThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times">倍</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.stagger">逐張顯示間隔</label>
+        <div class="inline">
+          <input type="number" id="wallStagger" min="0" max="500" step="10" value="60" />
+          <span data-i18n="unit.ms">ms</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.gap">圖片間距</label>
+        <div class="inline">
+          <input type="number" id="wallGap" min="0" max="60" step="2" value="10" />
+        <span data-i18n="unit.px">px</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.radius">圓角</label>
+        <div class="inline">
+          <input type="number" id="wallRadius" min="0" max="40" step="2" value="20" />
+        <span data-i18n="unit.px">px</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.hold">圖牆停留</label>
+        <div class="inline">
+          <input type="number" id="wallHold" min="0.5" max="120" step="0.5" value="1" />
+        <span data-i18n="unit.seconds">秒</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.dim">變暗亮度</label>
+        <div class="inline">
+          <input type="number" id="wallDim" min="0" max="100" step="5" value="40" />
+        <span data-i18n="unit.percent">%</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.dimMs">變暗過程</label>
+        <div class="inline">
+          <input type="number" id="wallDimMs" min="0.1" max="10" step="0.1" value="0.5" />
+        <span data-i18n="unit.seconds">秒</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.spot">提高亮度時間</label>
+        <div class="inline">
+          <input type="number" id="wallSpot" min="0.1" max="20" step="0.1" value="0.8" />
+        <span data-i18n="unit.seconds">秒</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.fly">放大／收回時間</label>
+        <div class="inline">
+          <input type="number" id="wallFly" min="0.1" max="10" step="0.1" value="1" />
+        <span data-i18n="unit.seconds">秒</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.big">大圖停留</label>
+        <div class="inline">
+          <input type="number" id="wallBig" min="0.5" max="120" step="0.5" value="3" />
+        <span data-i18n="unit.seconds">秒</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.bigScale">大圖占畫面</label>
+        <div class="inline">
+          <input type="number" id="wallBigScale" min="40" max="100" step="2" value="100" />
+        <span data-i18n="unit.percent">%</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.spots">每輪聚焦張數</label>
+        <div class="inline">
+          <input type="number" id="wallSpots" min="1" max="20" step="1" value="2" />
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="wallBreathe" checked />
+          <label for="wallBreathe" data-i18n="wall.breathe">大圖呼吸動畫</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="intensity" data-i18n="wall.breatheScale">呼吸幅度</label>
+        <div class="inline">
+          <input type="number" id="intensity" min="0.1" max="100" step="0.5" value="2" />
+          <span data-i18n="unit.times">倍</span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="wall.replace">每輪換圖比例</label>
+        <div class="inline">
+          <input type="number" id="wallReplacePct" min="0" max="100" step="5" value="80" />
+        <span data-i18n="unit.percent">%</span>
+        </div>
+      </div>
+      </div>
+      <div class="hint" data-i18n="wall.perfHint">數字越小越省效能；低階電腦建議 1 或更低。</div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="wall.hint">一輪＝變暗 → 聚焦大圖 → 回復亮度 → 換圖。換圖比例越高，一輪過後畫面變化越大。</div>
+    </div>
+  </div>
+
+  <div id="reelOpts">
+    <div class="sub">
+      <div class="title" data-i18n="reel.section">輪盤設定</div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="reel.count"></label>
+        <div class="inline">
+          <input type="number" id="reelCount" min="3" max="60" step="1" value="12" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.height"></label>
+        <div class="inline">
+          <input type="number" id="reelHeight" min="15" max="95" step="5" value="50" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.aspect"></label>
+        <select id="reelAspect">
+          <option value="0.75" selected data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="0" data-i18n="aspect.orig"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.dir"></label>
+        <select id="reelDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+          <option value="up" data-i18n="dir.up"></option>
+          <option value="down" data-i18n="dir.down"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.gap"></label>
+        <div class="inline">
+          <input type="number" id="reelGap" min="0" max="100" step="2" value="24" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.radius"></label>
+        <div class="inline">
+          <input type="number" id="reelRadius" min="0" max="60" step="2" value="16" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.speed"></label>
+        <div class="inline">
+          <input type="number" id="reelSpeed" min="100" max="10000" step="100" value="2000" />
+          <span data-i18n="unit.pxs"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.accel"></label>
+        <div class="inline">
+          <input type="number" id="reelAccel" min="0" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.spin"></label>
+        <div class="inline">
+          <input type="number" id="reelSpin" min="0" max="60" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.stop"></label>
+        <div class="inline">
+          <input type="number" id="reelStop" min="0.3" max="20" step="0.1" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.dim"></label>
+        <div class="inline">
+          <input type="number" id="reelDim" min="0" max="100" step="5" value="35" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.dimMs"></label>
+        <div class="inline">
+          <input type="number" id="reelDimMs" min="0.1" max="10" step="0.1" value="0.5" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.spot"></label>
+        <div class="inline">
+          <input type="number" id="reelSpot" min="0.1" max="20" step="0.1" value="0.8" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.fly"></label>
+        <div class="inline">
+          <input type="number" id="reelFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.big"></label>
+        <div class="inline">
+          <input type="number" id="reelBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="reelBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.replace"></label>
+        <div class="inline">
+          <input type="number" id="reelReplacePct" min="0" max="100" step="5" value="50" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="reel.thumb"></label>
+        <div class="inline">
+          <input type="number" id="reelThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="reelBreathe" checked />
+          <label for="reelBreathe" data-i18n="reel.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="reel.hint"></div>
+    </div>
+  </div>
+
+  <div id="polaOpts">
+    <div class="sub">
+      <div class="title" data-i18n="pola.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="pola.size"></label>
+        <div class="inline">
+          <input type="number" id="polaSize" min="20" max="90" step="5" value="55" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.aspect"></label>
+        <select id="polaAspect">
+          <option value="0.75" data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="0" selected data-i18n="aspect.orig"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.rotate"></label>
+        <div class="inline">
+          <input type="number" id="polaRotate" min="0" max="45" step="1" value="12" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.spread"></label>
+        <div class="inline">
+          <input type="number" id="polaSpread" min="0" max="45" step="1" value="20" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.drop"></label>
+        <div class="inline">
+          <input type="number" id="polaDrop" min="0.2" max="5" step="0.1" value="0.9" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.hold"></label>
+        <div class="inline">
+          <input type="number" id="polaHold" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.stack"></label>
+        <div class="inline">
+          <input type="number" id="polaStack" min="1" max="40" step="1" value="10" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.fade"></label>
+        <div class="inline">
+          <input type="number" id="polaFade" min="0.2" max="10" step="0.1" value="1.2" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="pola.thumb"></label>
+        <div class="inline">
+          <input type="number" id="polaThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="polaCaption" />
+          <label for="polaCaption" data-i18n="pola.caption"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="pola.hint"></div>
+    </div>
+  </div>
+
+  <div id="cfOpts">
+    <div class="sub">
+      <div class="title" data-i18n="cf.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="cf.side"></label>
+        <div class="inline">
+          <input type="number" id="cfSide" min="1" max="8" step="1" value="4" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.size"></label>
+        <div class="inline">
+          <input type="number" id="cfSize" min="20" max="90" step="5" value="55" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.aspect"></label>
+        <select id="cfAspect">
+          <option value="0.75" data-i18n="aspect.portrait"></option>
+          <option value="1" selected data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="0" data-i18n="aspect.orig"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.dir"></label>
+        <select id="cfDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.angle"></label>
+        <div class="inline">
+          <input type="number" id="cfAngle" min="0" max="85" step="5" value="55" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.spacing"></label>
+        <div class="inline">
+          <input type="number" id="cfSpacing" min="5" max="100" step="1" value="28" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.depth"></label>
+        <div class="inline">
+          <input type="number" id="cfDepth" min="0" max="200" step="5" value="45" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.sideDim"></label>
+        <div class="inline">
+          <input type="number" id="cfSideDim" min="0" max="100" step="5" value="55" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.move"></label>
+        <div class="inline">
+          <input type="number" id="cfMove" min="0.1" max="5" step="0.1" value="0.8" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.hold"></label>
+        <div class="inline">
+          <input type="number" id="cfHold" min="0.3" max="120" step="0.1" value="2.5" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="cfBigEvery" min="0" max="50" step="1" value="4" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.big"></label>
+        <div class="inline">
+          <input type="number" id="cfBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.fly"></label>
+        <div class="inline">
+          <input type="number" id="cfFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="cfBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.radius"></label>
+        <div class="inline">
+          <input type="number" id="cfRadius" min="0" max="60" step="2" value="8" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cf.thumb"></label>
+        <div class="inline">
+          <input type="number" id="cfThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="cfReflect" checked />
+          <label for="cfReflect" data-i18n="cf.reflect"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="cfBreathe" checked />
+          <label for="cfBreathe" data-i18n="cf.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="cf.hint"></div>
+    </div>
+  </div>
+
+  <div id="collageOpts">
+    <div class="sub">
+      <div class="title" data-i18n="collage.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="collage.min"></label>
+        <div class="inline">
+          <input type="number" id="collageMin" min="2" max="5" step="1" value="2" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.max"></label>
+        <div class="inline">
+          <input type="number" id="collageMax" min="2" max="5" step="1" value="5" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.swap"></label>
+        <div class="inline">
+          <input type="number" id="collageSwap" min="0.3" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.transMs"></label>
+        <div class="inline">
+          <input type="number" id="collageTransMs" min="0" max="5" step="0.1" value="0.9" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.trans"></label>
+        <select id="collageTrans">
+          <option value="random" selected data-i18n="effect.random"></option>
+          <option value="fade" data-i18n="effect.fade"></option>
+          <option value="slide" data-i18n="effect.slide"></option>
+          <option value="zoom" data-i18n="effect.zoom"></option>
+          <option value="wipe" data-i18n="effect.wipe"></option>
+          <option value="none" data-i18n="effect.none"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.layoutEvery"></label>
+        <div class="inline">
+          <input type="number" id="collageLayoutEvery" min="0" max="100" step="1" value="8" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.gap"></label>
+        <div class="inline">
+          <input type="number" id="collageGap" min="0" max="60" step="2" value="12" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.radius"></label>
+        <div class="inline">
+          <input type="number" id="collageRadius" min="0" max="60" step="2" value="12" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="collage.thumb"></label>
+        <div class="inline">
+          <input type="number" id="collageThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="collageKb" checked />
+          <label for="collageKb" data-i18n="collage.kb"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="collage.hint"></div>
+    </div>
+  </div>
+
+  <div id="filmOpts">
+    <div class="sub">
+      <div class="title" data-i18n="film.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="film.size"></label>
+        <div class="inline">
+          <input type="number" id="filmSize" min="15" max="90" step="5" value="45" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.aspect"></label>
+        <select id="filmAspect">
+          <option value="1.5" selected data-i18n="aspect.film"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="0.75" data-i18n="aspect.portrait"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="film.speed"></label>
+        <div class="inline">
+          <input type="number" id="filmSpeed" min="5" max="2000" step="5" value="60" />
+          <span data-i18n="unit.pxs"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.dir"></label>
+        <select id="filmDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="film.tilt"></label>
+        <div class="inline">
+          <input type="number" id="filmTilt" min="-20" max="20" step="1" value="0" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.tone"></label>
+        <select id="filmTone">
+          <option value="none" selected data-i18n="tone.none"></option>
+          <option value="sepia" data-i18n="tone.sepia"></option>
+          <option value="bw" data-i18n="tone.bw"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="film.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="filmBigEvery" min="0" max="300" step="1" value="12" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.big"></label>
+        <div class="inline">
+          <input type="number" id="filmBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.fly"></label>
+        <div class="inline">
+          <input type="number" id="filmFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="filmBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="film.thumb"></label>
+        <div class="inline">
+          <input type="number" id="filmThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="filmGrain" checked />
+          <label for="filmGrain" data-i18n="film.grain"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="filmShake" checked />
+          <label for="filmShake" data-i18n="film.shake"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="filmBreathe" checked />
+          <label for="filmBreathe" data-i18n="film.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="film.hint"></div>
+    </div>
+  </div>
+
+  <div id="ringOpts">
+    <div class="sub">
+      <div class="title" data-i18n="ring.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="ring.shape"></label>
+        <select id="ringShape">
+          <option value="ring" selected data-i18n="shape.ring"></option>
+          <option value="cube" data-i18n="shape.cube"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.dir"></label>
+        <select id="ringDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+          <option value="random" data-i18n="dir.random"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.count"></label>
+        <div class="inline">
+          <input type="number" id="ringCount" min="5" max="24" step="1" value="10" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.size"></label>
+        <div class="inline">
+          <input type="number" id="ringSize" min="15" max="80" step="5" value="45" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.aspect"></label>
+        <select id="ringAspect">
+          <option value="0.75" selected data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.gap"></label>
+        <div class="inline">
+          <input type="number" id="ringGap" min="0" max="200" step="5" value="30" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.tilt"></label>
+        <div class="inline">
+          <input type="number" id="ringTilt" min="-30" max="30" step="1" value="8" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.dim"></label>
+        <div class="inline">
+          <input type="number" id="ringDim" min="0" max="100" step="5" value="30" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.move"></label>
+        <div class="inline">
+          <input type="number" id="ringMove" min="0.1" max="10" step="0.1" value="1.4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.hold"></label>
+        <div class="inline">
+          <input type="number" id="ringHold" min="0" max="120" step="0.5" value="2" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="ringBigEvery" min="0" max="50" step="1" value="5" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.big"></label>
+        <div class="inline">
+          <input type="number" id="ringBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.fly"></label>
+        <div class="inline">
+          <input type="number" id="ringFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="ringBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.radius"></label>
+        <div class="inline">
+          <input type="number" id="ringRadius" min="0" max="60" step="2" value="10" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.thumb"></label>
+        <div class="inline">
+          <input type="number" id="ringThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="ringBreathe" checked />
+          <label for="ringBreathe" data-i18n="ring.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="ring.hint"></div>
+    </div>
+  </div>
+
+  <div id="bookOpts">
+    <div class="sub">
+      <div class="title" data-i18n="book.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="book.size"></label>
+        <div class="inline">
+          <input type="number" id="bookSize" min="30" max="98" step="2" value="80" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.aspect"></label>
+        <select id="bookAspect">
+          <option value="0.75" selected data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="book.pad"></label>
+        <div class="inline">
+          <input type="number" id="bookPad" min="0" max="25" step="1" value="8" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.paper"></label>
+        <select id="bookPaper">
+          <option value="cream" selected data-i18n="paper.cream"></option>
+          <option value="white" data-i18n="paper.white"></option>
+          <option value="black" data-i18n="paper.black"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="book.flip"></label>
+        <div class="inline">
+          <input type="number" id="bookFlip" min="0.2" max="10" step="0.1" value="1.4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.hold"></label>
+        <div class="inline">
+          <input type="number" id="bookHold" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="bookBigEvery" min="0" max="50" step="1" value="0" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.big"></label>
+        <div class="inline">
+          <input type="number" id="bookBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.fly"></label>
+        <div class="inline">
+          <input type="number" id="bookFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="bookBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.thumb"></label>
+        <div class="inline">
+          <input type="number" id="bookThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="bookBreathe" checked />
+          <label for="bookBreathe" data-i18n="book.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="book.hint"></div>
+    </div>
+  </div>
+
+  <div id="mosaicOpts">
+    <div class="sub">
+      <div class="title" data-i18n="mosaic.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="mosaic.tile"></label>
+        <div class="inline">
+          <input type="number" id="mosaicTile" min="8" max="120" step="2" value="32" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.pool"></label>
+        <div class="inline">
+          <input type="number" id="mosaicPool" min="10" max="300" step="10" value="80" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.tint"></label>
+        <div class="inline">
+          <input type="number" id="mosaicTint" min="0" max="80" step="5" value="35" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.order"></label>
+        <select id="mosaicOrder">
+          <option value="random" selected data-i18n="order.random"></option>
+          <option value="sweep" data-i18n="order.sweep"></option>
+          <option value="center" data-i18n="order.center"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.zoom"></label>
+        <div class="inline">
+          <input type="number" id="mosaicZoom" min="1" max="6" step="0.5" value="3" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.build"></label>
+        <div class="inline">
+          <input type="number" id="mosaicBuild" min="0.2" max="30" step="0.5" value="4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.hold"></label>
+        <div class="inline">
+          <input type="number" id="mosaicHold" min="0" max="60" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.reveal"></label>
+        <div class="inline">
+          <input type="number" id="mosaicReveal" min="0.1" max="10" step="0.1" value="2" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.orig"></label>
+        <div class="inline">
+          <input type="number" id="mosaicOrig" min="0" max="60" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="mosaic.hint"></div>
+    </div>
+  </div>
+
+  <div id="cnvOpts">
+    <div class="sub">
+      <div class="title" data-i18n="cnv.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="cnv.count"></label>
+        <div class="inline">
+          <input type="number" id="cnvCount" min="6" max="80" step="1" value="30" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.size"></label>
+        <div class="inline">
+          <input type="number" id="cnvSize" min="30" max="95" step="5" value="70" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.rotate"></label>
+        <div class="inline">
+          <input type="number" id="cnvRotate" min="0" max="20" step="1" value="4" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.view"></label>
+        <div class="inline">
+          <input type="number" id="cnvView" min="30" max="100" step="5" value="80" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.fly"></label>
+        <div class="inline">
+          <input type="number" id="cnvFly" min="0.3" max="20" step="0.1" value="3.5" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.hold"></label>
+        <div class="inline">
+          <input type="number" id="cnvHold" min="0" max="120" step="0.5" value="4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.replace"></label>
+        <div class="inline">
+          <input type="number" id="cnvReplace" min="0" max="20" step="1" value="3" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.radius"></label>
+        <div class="inline">
+          <input type="number" id="cnvRadius" min="0" max="40" step="1" value="6" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.thumb"></label>
+        <div class="inline">
+          <input type="number" id="cnvThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="cnvFrame" />
+          <label for="cnvFrame" data-i18n="cnv.frame"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="cnv.hint"></div>
+    </div>
+  </div>
+
+  <div id="floatOpts">
+    <div class="sub">
+      <div class="title" data-i18n="float.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="float.style"></label>
+        <select id="floatStyle">
+          <option value="stars" selected data-i18n="style.stars"></option>
+          <option value="bubbles" data-i18n="style.bubbles"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="float.count"></label>
+        <div class="inline">
+          <input type="number" id="floatCount" min="6" max="80" step="1" value="30" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.size"></label>
+        <div class="inline">
+          <input type="number" id="floatSize" min="5" max="60" step="1" value="22" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.travel"></label>
+        <div class="inline">
+          <input type="number" id="floatTravel" min="2" max="60" step="1" value="14" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="floatBigEvery" min="0" max="300" step="1" value="10" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.big"></label>
+        <div class="inline">
+          <input type="number" id="floatBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.fly"></label>
+        <div class="inline">
+          <input type="number" id="floatFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="floatBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="float.thumb"></label>
+        <div class="inline">
+          <input type="number" id="floatThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="floatBreathe" checked />
+          <label for="floatBreathe" data-i18n="float.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="float.hint"></div>
+    </div>
+  </div>
+
+  <div id="tlOpts">
+    <div class="sub">
+      <div class="title" data-i18n="timeline.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="timeline.order"></label>
+        <select id="tlOrder">
+          <option value="asc" selected data-i18n="order.asc"></option>
+          <option value="desc" data-i18n="order.desc"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="timeline.side"></label>
+        <select id="tlSide">
+          <option value="left" selected data-i18n="side.left"></option>
+          <option value="right" data-i18n="side.right"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="timeline.hold"></label>
+        <div class="inline">
+          <input type="number" id="tlHold" min="0.5" max="120" step="0.5" value="4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="timeline.fade"></label>
+        <div class="inline">
+          <input type="number" id="tlFade" min="0" max="5" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="tlKb" checked />
+          <label for="tlKb" data-i18n="timeline.kb"></label>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="tlShowTime" />
+          <label for="tlShowTime" data-i18n="timeline.showTime"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="timeline.hint"></div>
+    </div>
+  </div>
+
+  <div class="field">
+    <label data-i18n="field.options">選項</label>
+    <div class="checks">
+      <div class="check-row">
+        <input type="checkbox" id="recursive" />
+        <label for="recursive" data-i18n="opt.recursive">包含子目錄</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="shuffle" checked />
+        <label for="shuffle" data-i18n="opt.shuffle">隨機順序</label>
+      </div>
+      <div class="check-row">
+        <input type="checkbox" id="loop" checked />
+        <label for="loop" data-i18n="opt.loop">循環播放</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button class="btn-primary" id="start" disabled data-i18n="btn.start">▶ 開始播放</button>
+    <div class="hint" data-i18n="hint.settings">播放時：點擊滑鼠或按任意鍵退出；移動滑鼠可查看圖片路徑與資訊。</div>
+  </div>
+
+  <script src="i18n.js"></script>
+  <script src="fx.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

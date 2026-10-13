@@ -1452,7 +1452,54 @@ function cfApply(it, animate) {
   it.node.style.opacity = String(p.op);
   it.node.style.zIndex = String(p.z);
   it.veil.style.opacity = String(p.veil);
-  if (!animate) { void it.node.offsetWidth; it.node.style.transition = ''; it.veil.style.transition = ''; }
+  if (it.refl) {
+    if (!animate) it.refl.style.transition = 'none';
+    it.refl.style.opacity = String(1 - p.veil);
+  }
+  if (!animate) {
+    void it.node.offsetWidth;
+    it.node.style.transition = ''; it.veil.style.transition = '';
+    if (it.refl) it.refl.style.transition = '';
+  }
+}
+
+// 圓角直接烤進 canvas（取代 overflow:hidden + border-radius 的遮罩，3D 動畫時不必每幀重算裁切）
+function cfBakeRound(src, w) {
+  const r = C.radius * (src.width / w);
+  if (r <= 0) return src;
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d');
+  g.beginPath();
+  g.roundRect(0, 0, c.width, c.height, r);
+  g.clip();
+  g.drawImage(src, 0, 0);
+  freeCanvas(src);
+  return c;
+}
+
+// 倒影也預先畫成一張小 canvas（取代 -webkit-box-reflect，那個在 3D 變形下每幀都要重畫）
+// 半解析度：倒影本來就淡，糊一點反而自然
+const CF_REFL = 0.38;
+function cfMakeReflection(src) {
+  const sw = src.width, sh = Math.max(1, Math.round(src.height * CF_REFL));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(sw / 2));
+  c.height = Math.max(1, Math.round(sh / 2));
+  const g = c.getContext('2d');
+  g.save();
+  g.translate(0, c.height);
+  g.scale(1, -1);
+  g.drawImage(src, 0, src.height - sh, sw, sh, 0, 0, c.width, c.height);
+  g.restore();
+  g.globalCompositeOperation = 'destination-in';
+  const grad = g.createLinearGradient(0, 0, 0, c.height);
+  grad.addColorStop(0, 'rgba(0,0,0,0.22)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, c.width, c.height);
+  c.className = 'cfi-refl';
+  return c;
 }
 
 function cfMakeItem(th, li) {
@@ -1466,10 +1513,13 @@ function cfMakeItem(th, li) {
   inner.className = 'cfi-inner';
   const veil = document.createElement('div');
   veil.className = 'cfi-veil';
-  inner.appendChild(th.canvas);
+  const canvas = th.baked ? th.canvas : cfBakeRound(th.canvas, th.w);
+  inner.appendChild(canvas);
   inner.appendChild(veil);
   node.appendChild(inner);
-  const it = { node, inner, veil, canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: th.w, h: th.h, li };
+  let refl = null;
+  if (C.reflect) { refl = cfMakeReflection(canvas); node.appendChild(refl); }
+  const it = { node, inner, veil, refl, canvas, path: th.path, nw: th.nw, nh: th.nh, w: th.w, h: th.h, li };
   el('cfStage').appendChild(node);
   cfApply(it, false);
   return it;
@@ -1479,12 +1529,13 @@ function cfMakeItem(th, li) {
 function cfClone(src) {
   const c = document.createElement('canvas');
   c.width = src.canvas.width; c.height = src.canvas.height;
-  c.getContext('2d', { alpha: false }).drawImage(src.canvas, 0, 0);
-  return { canvas: c, path: src.path, nw: src.nw, nh: src.nh, w: src.w, h: src.h };
+  c.getContext('2d').drawImage(src.canvas, 0, 0);
+  return { canvas: c, baked: true, path: src.path, nw: src.nw, nh: src.nh, w: src.w, h: src.h };
 }
 
 function cfRemove(it) {
   freeCanvas(it.canvas);
+  freeCanvas(it.refl);
   it.node.remove();
 }
 
@@ -2162,6 +2213,7 @@ let ringO = null;          // 立方體：目前方向（DOMMatrix）
 let ringLastDir = null;
 let ringGeo = null;        // { w, h, R }
 let ringNeedsRebuild = false;
+let ringReady = null;      // 快轉模式：已經做好、等著換上去的縮圖
 
 function ringSettings() {
   return {
@@ -2182,6 +2234,12 @@ function ringSettings() {
     radius: num(cfg.ringRadius, 10),
     breathe: cfg.ringBreathe !== false,
     thumbScale: num(cfg.ringThumbScale, 1),
+    // 轉法：step＝一格一格轉；spin＝快速旋轉 → 幾秒後減速停下 → 放大正面那張
+    motion: cfg.ringMotion === 'spin' ? 'spin' : 'step',
+    spinMs: Math.max(0, num(cfg.ringSpinMs, 4000)),             // 全速旋轉多久
+    spinSpeed: Math.max(0.05, num(cfg.ringSpinSpeed, 1)),       // 全速時每秒幾圈
+    spinStopMs: Math.max(300, num(cfg.ringSpinStopMs, 2500)),   // 減速到停下花多久
+    spinPauseMs: Math.max(0, num(cfg.ringSpinPauseMs, 600)),    // 停下後多久開始放大
   };
 }
 
@@ -2292,6 +2350,7 @@ async function ringBuild() {
   if (wallStopped) return false;
   ringFaces.forEach((f) => { freeCanvas(f.canvas); f.node.remove(); });
   ringFaces = [];
+  if (ringReady) { freeCanvas(ringReady.canvas); ringReady = null; } // 尺寸可能變了
   const rot = el('ringRot');
   rot.style.transition = 'none';
   el('ring').classList.toggle('cube', RG.shape === 'cube');
@@ -2391,7 +2450,122 @@ async function ringSpotlight() {
   wallHeroImg = null;
 }
 
+// ---- 快轉模式 ----
+// 一個 Web Animations 動畫跑完「加速 → 全速 → 減速停下」，全程在合成器上；
+// 停下的位置一定剛好對齊某一張（總角度取 step 的整數倍，多出來的補進全速段）。
+// 主執行緒只用 requestAnimationFrame 依同一條角度曲線：更新旋轉木馬的背面變暗、
+// 並把轉到背面的那幾張換成新圖（每一輪每張最多換一次）。
+const RING_SPIN_ACCEL_MS = 900;
+
+async function ringSpin() {
+  const cube = RG.shape === 'cube';
+  let d = RG.dir;
+  if (d !== 'left' && d !== 'right') d = Math.random() < 0.5 ? 'left' : 'right';
+  const sgn = d === 'right' ? 1 : -1;                  // rotateY 角度的增減方向（left → ringF 往上加）
+  const n = ringFaces.length;
+  const step = cube ? 90 : 360 / n;
+  const v = (RG.spinSpeed * 360) / 1000;               // 度 / 毫秒
+  const A = RING_SPIN_ACCEL_MS, T = RG.spinStopMs;
+  const uA = (v * A) / 2;                              // 等加速（ease-in 二次）走的角度
+  const dDec = (v * T) / 3;                            // ease-out 三次從速度 v 減到 0 走的角度
+  const k = Math.max(1, Math.ceil((uA + v * RG.spinMs + dDec) / step));
+  const D = k * step;
+  const cruise = D - uA - dDec;
+  const Cms = cruise / v;
+  const total = A + Cms + T;
+
+  const pre = `translateZ(${(-ringGeo.R).toFixed(1)}px) rotateX(${-RG.tilt}deg) `;
+  const post = cube ? ' ' + m3d(ringO) : '';
+  const phi0 = cube ? 0 : -ringF * step;
+  const tf = (phi) => `${pre}rotateY(${phi.toFixed(3)}deg)${post}`;
+  const p1 = phi0 + sgn * uA, p2 = p1 + sgn * cruise, p3 = phi0 + sgn * D;
+  const phiAt = (t) => {
+    if (t <= 0) return phi0;
+    if (t < A) return phi0 + sgn * uA * (t / A) * (t / A);
+    if (t < A + Cms) return p1 + sgn * v * (t - A);
+    const u = Math.min(1, (t - A - Cms) / T);
+    return p2 + sgn * dDec * (1 - (1 - u) ** 3);
+  };
+
+  const rot = el('ringRot');
+  rot.style.transition = 'none';
+  ringFaces.forEach((f) => { f.veil.style.transition = 'none'; });
+  const anim = rot.animate([
+    { transform: tf(phi0), offset: 0, easing: 'cubic-bezier(.333,0,.667,.333)' },
+    { transform: tf(p1), offset: A / total, easing: 'linear' },
+    { transform: tf(p2), offset: (A + Cms) / total, easing: 'cubic-bezier(.333,1,.667,1)' },
+    { transform: tf(p3), offset: 1 },
+  ], { duration: total, fill: 'forwards' });
+
+  // 每一張此刻「朝向觀眾」的程度：1＝正面、-1＝正背面
+  const facing = (f, i, phi) => cube
+    ? dirVec(new DOMMatrix(`rotateY(${phi}deg)`).multiply(ringO).multiply(f.m), 0, 0, 1).z
+    : Math.cos(((i * step + phi) * Math.PI) / 180);
+
+  const fresh = new Set();
+  let busy = false, done = false;
+  const maxV = 1 - RG.dim;
+  const tick = () => {
+    if (done || wallStopped) return;
+    const phi = phiAt(anim.currentTime || 0);
+    ringFaces.forEach((f, i) => {
+      const fz = facing(f, i, phi);
+      if (!cube) f.veil.style.opacity = (maxV * (1 - fz) / 2).toFixed(3);
+      // 轉到背面、這一輪還沒換過 → 換上新圖
+      if (ringReady && fz < -0.5 && !fresh.has(f) && (!cube || Math.abs(f.m.m22) > 0.5)) {
+        ringSetImage(f, ringReady);
+        if (cube) cubeOrient(f, ringO);
+        ringReady = null;
+        fresh.add(f);
+      }
+    });
+    if (!ringReady && !busy && fresh.size < n) {
+      busy = true;
+      ringThumb().then((th) => {
+        busy = false;
+        if (wallStopped || !ringMode) { if (th) freeCanvas(th.canvas); return; }
+        if (ringReady) { if (th) freeCanvas(th.canvas); } else ringReady = th;
+      });
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+
+  await anim.finished.catch(() => {});
+  done = true;
+  if (wallStopped) return;
+
+  // 把終點寫回 style，再拿掉動畫
+  if (cube) ringO = roundMatrix(new DOMMatrix(`rotateY(${sgn * D}deg)`).multiply(ringO));
+  else ringF -= sgn * k;
+  rot.style.transform = cube ? ringCubeTransform() : ringCarouselTransform();
+  if (!cube) ringCarouselVeils();
+  anim.cancel();
+  void rot.offsetWidth;
+  rot.style.transition = '';
+  ringFaces.forEach((f) => { f.veil.style.transition = ''; });
+  ringSetCurrent();
+}
+
+async function ringSpinLoop() {
+  while (!wallStopped) {
+    if (ringNeedsRebuild) {
+      ringNeedsRebuild = false;
+      if (!(await ringBuild())) return;
+    }
+    await ringSpin();
+    if (wallStopped) return;
+    await sleep(RG.spinPauseMs);
+    if (wallStopped) return;
+    if (ringNeedsRebuild) continue;
+    await ringSpotlight();
+    if (wallStopped) return;
+    await sleep(RG.holdMs);
+  }
+}
+
 async function ringLoop() {
+  if (RG.motion === 'spin') return ringSpinLoop();
   let steps = 0;
   while (!wallStopped) {
     if (ringNeedsRebuild) {
@@ -2914,17 +3088,26 @@ async function mosaicStart() {
 // 流程：照片散布在一大張「世界」上（鬆散格狀＋隨機偏移、大小、傾斜）→
 //       鏡頭飛到某一張（先拉遠、平移、再拉近）→ 停下來看（換上原始解析度）→
 //       停留期間把畫面外的幾張換成新照片 → 飛往下一張 → …
-// 鏡頭：#cvWorld 的 transform ＝ translate(畫面中心) rotate(−r) scale(s) translate(−x, −y)，
-//       四個函式在每個關鍵影格都一樣 → 各自內插：位置在世界座標中線性移動、縮放獨立。
-//       飛行取 24 個取樣點：位置 ease-in-out、縮放在對數空間內插並在中段拉遠。
+// 繪製：整個畫面只有一張 <canvas>，每幀用 requestAnimationFrame 重畫。
+//       每張照片的白框／圓角／陰影在載入時就「烤」成一張小圖（sprite），每幀只是 drawImage；
+//       停下時的清晰原圖也先縮成剛好的螢幕解析度。這樣鏡頭怎麼縮放都不必重新繪製 DOM 圖層
+//       （舊做法是縮放一整個巨大的 DOM 世界，瀏覽器得不斷重畫陰影與裁切，所以很卡）。
+// 鏡頭：translate(畫面中心) rotate(−r) scale(s) translate(−x, −y)；
+//       飛行時位置 ease-in-out、縮放在對數空間內插並在中段拉遠。
 let canvasMode = false;
 let CV = null;
-let cvItems = [];      // { node, pic, canvas, img, path, nw, nh, cx, cy, w, h, rot, gx, gy }
+let cvItems = [];      // { sprite, m, W, H, pad, path, nw, nh, cx, cy, w, h, rot, gx, gy, full, fullA }
 let cvCam = { x: 0, y: 0, s: 1, r: 0 };
 let cvFocus = null;
-let cvAnim = null;
+let cvAnim = null;     // 與 exitNow 相容（{ pause() }）
 let cvNeedsRebuild = false;
+let cvCtx = null;
+let cvDirty = true;
+let cvRaf = 0;
+let cvFly_ = null;     // 飛行中：{ t0, dur, camAt(t), from }
+let cvFades = [];      // 原圖淡入：{ it, t0, dur }
 const CV_CELL = 1000;   // 世界座標中每格大小
+const CV_SHADOW_BLUR = 30, CV_SHADOW_Y = 10;
 
 function canvasSettings() {
   return {
@@ -2941,13 +3124,95 @@ function canvasSettings() {
   };
 }
 
-const cvTx = (c) => `translate(${(window.innerWidth / 2).toFixed(1)}px, ${(window.innerHeight / 2).toFixed(1)}px) rotate(${(-(c.r || 0)).toFixed(3)}deg) scale(${c.s.toFixed(5)}) translate(${(-c.x).toFixed(2)}px, ${(-c.y).toFixed(2)}px)`;
+// ---- 畫布 ----
+function cvEnsureCanvas() {
+  let c = el('cvCanvas');
+  if (!c) {
+    c = document.createElement('canvas');
+    c.id = 'cvCanvas';
+    el('cvStage').appendChild(c);
+  }
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.round(window.innerWidth * dpr), H = Math.round(window.innerHeight * dpr);
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  cvCtx = c.getContext('2d', { alpha: true });
+  cvCtx.imageSmoothingQuality = 'medium';
+  cvDirty = true;
+}
 
 function cvSetCam(c) {
   cvCam = { ...c };
-  el('cvWorld').style.transform = cvTx(cvCam);
+  cvDirty = true;
 }
 
+// 鏡頭 c 下，這張是否（部分）在畫面內
+function cvVisible(it, c, margin = 0.15) {
+  const hw = window.innerWidth / 2 / c.s, hh = window.innerHeight / 2 / c.s;
+  const r = Math.max(it.w, it.h) * 0.75 + (it.pad || 0) + CV_SHADOW_BLUR;
+  return Math.abs(it.cx - c.x) < hw * (1 + margin) + r && Math.abs(it.cy - c.y) < hh * (1 + margin) + r;
+}
+
+function cvRoundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  if (r > 0) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);
+}
+
+function cvDraw(now) {
+  const g = cvCtx;
+  if (!g) return;
+  const dpr = window.devicePixelRatio || 1;
+  const c = cvCam;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.translate(window.innerWidth / 2, window.innerHeight / 2);
+  g.rotate((-(c.r || 0) * Math.PI) / 180);
+  g.scale(c.s, c.s);
+  g.translate(-c.x, -c.y);
+  for (const it of cvItems) {
+    if (!it.sprite || !cvVisible(it, c, 0.05)) continue;
+    g.save();
+    g.translate(it.cx, it.cy);
+    g.rotate((it.rot * Math.PI) / 180);
+    const ox = it.W / 2 + it.m, oy = it.H / 2 + it.m;
+    g.drawImage(it.sprite, -ox, -oy, it.W + it.m * 2, it.H + it.m * 2);
+    if (it.full && it.fullA > 0) {
+      g.globalAlpha = it.fullA;
+      if (!CV.frame && CV.radius > 0) { cvRoundRect(g, -it.w / 2, -it.h / 2, it.w, it.h, CV.radius); g.clip(); }
+      g.drawImage(it.full, -it.w / 2, -it.h / 2, it.w, it.h);
+    }
+    g.restore();
+  }
+}
+
+function cvTick(now) {
+  cvRaf = 0;
+  if (!canvasMode || wallStopped) return;
+  if (cvFly_) {
+    const t = Math.min(1, (now - cvFly_.t0) / cvFly_.dur);
+    cvCam = cvFly_.camAt(t);
+    // 拉遠到一定程度後放掉上一張的原圖（此時已經小到看不出差別）
+    if (t > 0.4 && cvFly_.from && cvFly_.from.full) cvDropFull(cvFly_.from);
+    if (t >= 1) { const done = cvFly_.done; cvFly_ = null; done(); }
+    cvDirty = true;
+  }
+  if (cvFades.length) {
+    cvFades = cvFades.filter((f) => {
+      f.it.fullA = Math.min(1, (now - f.t0) / f.dur);
+      return f.it.fullA < 1 && f.it.full;
+    });
+    cvDirty = true;
+  }
+  if (cvDirty) { cvDirty = false; cvDraw(now); }
+  cvRaf = requestAnimationFrame(cvTick);
+}
+
+function cvKick() {
+  cvDirty = true;
+  if (!cvRaf) cvRaf = requestAnimationFrame(cvTick);
+}
+
+// ---- 照片 ----
 // 一張照片的世界尺寸：放進 (CELL×size×隨機 0.75～1) 的方框，保留原圖比例（限制 1:2～2:1）
 function cvItemSize(nw, nh) {
   const box = CV_CELL * CV.size * (0.75 + Math.random() * 0.25);
@@ -2964,25 +3229,44 @@ async function cvLoadThumb(path) {
   }, 1);
 }
 
-function cvPlace(it) {
+// 把縮圖連同白框／圓角／陰影烤成一張 sprite（以縮圖的解析度為準）
+function cvBake(it, thumb) {
   const pad = CV.frame ? Math.round(Math.min(it.w, it.h) * 0.045) : 0;
-  Object.assign(it.node.style, {
-    width: (it.w + pad * 2).toFixed(0) + 'px', height: (it.h + pad * 2).toFixed(0) + 'px',
-    padding: CV.frame ? pad + 'px' : '',
-    transform: `translate(${(it.cx - it.w / 2 - pad).toFixed(1)}px, ${(it.cy - it.h / 2 - pad).toFixed(1)}px) rotate(${it.rot.toFixed(2)}deg)`,
-  });
+  const W = it.w + pad * 2, H = it.h + pad * 2;
+  const m = CV_SHADOW_BLUR + CV_SHADOW_Y;          // 陰影需要的邊界（世界單位）
+  const k = thumb.width / it.w;                    // 世界單位 → sprite 像素
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round((W + m * 2) * k));
+  c.height = Math.max(1, Math.round((H + m * 2) * k));
+  const g = c.getContext('2d');
+  g.scale(k, k);
+  const r = CV.frame ? 3 : CV.radius;
+  g.save();
+  g.shadowColor = 'rgba(0,0,0,0.55)';
+  g.shadowBlur = CV_SHADOW_BLUR * k;
+  g.shadowOffsetY = CV_SHADOW_Y * k;
+  cvRoundRect(g, m, m, W, H, r);
+  g.fillStyle = CV.frame ? '#f4f2ec' : '#111';
+  g.fill();
+  g.restore();
+  g.save();
+  if (!CV.frame) { cvRoundRect(g, m, m, W, H, r); g.clip(); }
+  g.drawImage(thumb, m + pad, m + pad, it.w, it.h);
+  g.restore();
+  Object.assign(it, { sprite: c, m, W, H, pad });
 }
 
 function cvSetImage(it, th) {
-  if (it.canvas) { freeCanvas(it.canvas); it.canvas.remove(); }
-  if (it.img) { it.img.remove(); it.img = null; }
-  it.pic.insertBefore(th.canvas, it.pic.firstChild);
+  if (it.sprite) freeCanvas(it.sprite);
+  cvDropFull(it);
   const sz = cvItemSize(th.nw, th.nh);
-  Object.assign(it, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: sz.w, h: sz.h });
+  Object.assign(it, { path: th.path, nw: th.nw, nh: th.nh, w: sz.w, h: sz.h });
   it.cx = (it.gx + 0.5) * CV_CELL + (Math.random() - 0.5) * CV_CELL * 0.22;
   it.cy = (it.gy + 0.5) * CV_CELL + (Math.random() - 0.5) * CV_CELL * 0.22;
   it.rot = (Math.random() * 2 - 1) * CV.rotate;
-  cvPlace(it);
+  cvBake(it, th.canvas);
+  freeCanvas(th.canvas);
+  cvKick();
 }
 
 // 停在這張時，鏡頭的位置與縮放（含白框）
@@ -2992,40 +3276,29 @@ function cvCamFor(it) {
   return { x: it.cx, y: it.cy, s, r: it.rot }; // 鏡頭跟著照片傾斜，停下時照片是正的
 }
 
-// 鏡頭 c 下，這張是否（部分）在畫面內
-function cvVisible(it, c, margin = 0.15) {
-  const hw = window.innerWidth / 2 / c.s, hh = window.innerHeight / 2 / c.s;
-  const r = Math.max(it.w, it.h) * 0.75;
-  return Math.abs(it.cx - c.x) < hw * (1 + margin) + r && Math.abs(it.cy - c.y) < hh * (1 + margin) + r;
-}
-
 async function cvBuild() {
   const stage = el('cvStage');
   if (cvItems.length) { stage.classList.add('fade'); await sleep(700); }
   if (wallStopped) return false;
-  cvItems.forEach((it) => { freeCanvas(it.canvas); it.node.remove(); });
+  cvItems.forEach((it) => { freeCanvas(it.sprite); cvDropFull(it); });
   cvItems = [];
-  el('cnv').classList.toggle('frame', CV.frame);
+  cvFades = [];
+  cvFly_ = null;
+  cvEnsureCanvas();
   const n = Math.min(CV.count, Math.max(6, images.length));
-  const cols = Math.max(3, Math.round(Math.sqrt(n * 16 / 9))), rows = Math.ceil(n / cols);
-  const world = el('cvWorld');
+  const cols = Math.max(3, Math.round(Math.sqrt(n * 16 / 9)));
   for (let i = 0; i < n; i++) {
     const th = await cvLoadThumb(nextImagePathCycle() || '');
     if (wallStopped) return false;
     if (!th) continue;
-    const node = document.createElement('div');
-    node.className = 'cvi';
-    const pic = document.createElement('div');
-    pic.className = 'cvi-pic';
-    node.appendChild(pic);
-    world.appendChild(node);
-    const it = { node, pic, canvas: null, img: null, gx: i % cols, gy: Math.floor(i / cols) };
+    const it = { sprite: null, full: null, fullA: 0, gx: i % cols, gy: Math.floor(i / cols) };
     cvSetImage(it, th);
     cvItems.push(it);
   }
   if (cvItems.length === 0) { showMessage(window.I18N.t('msg.noImages')); return false; }
   cvFocus = rand(cvItems);
   cvSetCam(cvCamFor(cvFocus));
+  cvKick();
   stage.classList.remove('fade');
   await sleep(700);
   return true;
@@ -3040,47 +3313,62 @@ function cvPickNext() {
   return rand(good.length ? good : others);
 }
 
-// 飛行：24 個取樣點，位置 ease-in-out、縮放對數內插並在中段拉遠到能同時看到起訖兩張
-function cvFly(to) {
-  const A = cvCam, B = cvCamFor(to);
+// 飛行：位置 ease-in-out、縮放對數內插並在中段拉遠到能同時看到起訖兩張
+function cvFly(to, from) {
+  const A = { ...cvCam }, B = cvCamFor(to);
   const dx = Math.abs(B.x - A.x), dy = Math.abs(B.y - A.y);
   const fit = Math.min(window.innerWidth / (dx + CV_CELL), window.innerHeight / (dy + CV_CELL)) * 0.9;
   const sMid = Math.min(A.s, B.s, fit);
   const la = Math.log(A.s), lb = Math.log(B.s), lm = Math.log(sMid);
   const bump = Math.max(0, (la + lb) / 2 - lm);
   const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-  const kf = [];
-  const N = 24;
-  for (let i = 0; i <= N; i++) {
-    const t = i / N, u = ease(t);
-    const s = Math.exp(la + (lb - la) * u - bump * Math.sin(Math.PI * t));
-    kf.push({ transform: cvTx({ x: A.x + (B.x - A.x) * u, y: A.y + (B.y - A.y) * u, s, r: (A.r || 0) + ((B.r || 0) - (A.r || 0)) * u }) });
-  }
-  const world = el('cvWorld');
-  const anim = world.animate(kf, { duration: CV.flyMs, easing: 'linear', fill: 'forwards' });
-  cvAnim = anim;
-  return anim.finished.catch(() => {}).then(() => {
-    cvSetCam(B);
-    anim.cancel();
-    if (cvAnim === anim) cvAnim = null;
-  });
+  const camAt = (t) => {
+    const u = ease(t);
+    return {
+      x: A.x + (B.x - A.x) * u,
+      y: A.y + (B.y - A.y) * u,
+      s: Math.exp(la + (lb - la) * u - bump * Math.sin(Math.PI * t)),
+      r: (A.r || 0) + ((B.r || 0) - (A.r || 0)) * u,
+    };
+  };
+  return new Promise((resolve) => {
+    cvFly_ = { t0: performance.now(), dur: CV.flyMs, camAt, from, done: () => { cvCam = B; resolve(); } };
+    cvAnim = { pause() { cvFly_ = null; } };
+    cvKick();
+  }).then(() => { cvAnim = null; });
 }
 
-// 停下：換上原始解析度
+// 停下：換上原始解析度（先縮到剛好的螢幕像素，cover 裁切同縮圖）
 async function cvSharpen(it) {
   const full = await loadFull(it.path);
   if (!full || wallStopped || it !== cvFocus) return;
-  const img = document.createElement('img');
-  img.src = full.src;
-  try { await img.decode(); } catch { /* ignore */ }
-  if (it !== cvFocus) return;
-  it.pic.appendChild(img);
-  it.img = img;
-  requestAnimationFrame(() => img.classList.add('on'));
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.max(1, Math.round(it.w * cvCam.s * dpr)), ph = Math.max(1, Math.round(it.h * cvCam.s * dpr));
+  const nw = full.naturalWidth, nh = full.naturalHeight;
+  let sx = 0, sy = 0, sw = nw, sh = nh;
+  if (nw / nh > it.w / it.h) { sw = Math.round(nh * it.w / it.h); sx = Math.round((nw - sw) / 2); }
+  else { sh = Math.round(nw * it.h / it.w); sy = Math.round((nh - sh) / 2); }
+  let bmp = null;
+  try {
+    bmp = await createImageBitmap(full, sx, sy, sw, sh,
+      { resizeWidth: Math.min(pw, sw), resizeHeight: Math.min(ph, sh), resizeQuality: 'high' });
+  } catch { bmp = null; }
+  full.src = '';
+  if (!bmp) return;
+  if (it !== cvFocus || wallStopped) { bmp.close(); return; }
+  cvDropFull(it);
+  it.full = bmp;
+  it.fullA = 0;
+  cvFades.push({ it, t0: performance.now(), dur: 400 });
+  cvKick();
 }
 
-function cvBlur(it) {
-  if (it && it.img) { it.img.remove(); it.img = null; }
+function cvDropFull(it) {
+  if (!it || !it.full) return;
+  if (it.full.close) it.full.close();
+  it.full = null;
+  it.fullA = 0;
+  cvDirty = true;
 }
 
 // 停留期間：把現在和下一段飛行都看不到的幾張換成新照片
@@ -3109,8 +3397,7 @@ async function cvLoop() {
     if (wallStopped) return;
     const from = cvFocus;
     cvFocus = next;
-    setTimeout(() => cvBlur(from), CV.flyMs * 0.4); // 拉遠後再拿掉原圖，看不出切換
-    await cvFly(next);
+    await cvFly(next, from);
   }
 }
 
@@ -3119,7 +3406,6 @@ async function canvasStart() {
   canvasMode = true;
   wallStopped = false;
   CV = canvasSettings();
-  document.documentElement.style.setProperty('--cnv-radius', CV.radius + 'px');
   document.body.classList.add('canvas-mode');
   el('cvStage').classList.add('fade');
   if (await cvBuild()) cvLoop();

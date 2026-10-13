@@ -96,6 +96,8 @@ async function restoreSettings() {
   restoreWallFields(s, RING_FIELDS);
   if (typeof s.ringShape === 'string') el('ringShape').value = s.ringShape;
   if (typeof s.ringDir === 'string') el('ringDir').value = s.ringDir;
+  el('ringMotion').value = s.ringMotion === 'spin' ? 'spin' : 'step';
+  toggleRingMotion();
   restoreAspect('ringAspect', s.ringAspect);
   restoreWallFields(s, BOOK_FIELDS);
   restoreAspect('bookAspect', s.bookAspect);
@@ -229,6 +231,10 @@ const RING_FIELDS = [
   ['ringBigScale', 'ringBigScale', 100, 1],
   ['ringRadius', 'ringRadius', 10, 1],
   ['ringThumbScale', 'ringThumbScale', 1, 1],
+  ['ringSpinMs', 'ringSpinSec', 4000, 1000],
+  ['ringSpinSpeed', 'ringSpinSpeed', 1, 1],
+  ['ringSpinStopMs', 'ringSpinStop', 2500, 1000],
+  ['ringSpinPauseMs', 'ringSpinPause', 600, 1000],
 ];
 
 // ---- 翻頁書設定（格式同上）----
@@ -432,6 +438,12 @@ function toggleEffectOpts() {
 el('effect').addEventListener('change', toggleEffectOpts);
 el('mode').addEventListener('change', toggleEffectOpts);
 
+// 3D 旋轉相簿：依「轉法」顯示對應的欄位
+function toggleRingMotion() {
+  el('ringOpts').classList.toggle('spin', el('ringMotion').value === 'spin');
+}
+el('ringMotion').addEventListener('change', toggleRingMotion);
+
 function restoreWallFields(s, fields = WALL_FIELDS) {
   for (const [key, id, def, mul] of fields) {
     const v = typeof s[key] === 'number' ? s[key] : def;
@@ -509,6 +521,7 @@ el('start').addEventListener('click', async () => {
     filmBreathe: el('filmBreathe').checked,
     ringShape: el('ringShape').value,
     ringDir: el('ringDir').value,
+    ringMotion: el('ringMotion').value,
     ringAspect: parseFloat(el('ringAspect').value) || 0.75,
     ringBreathe: el('ringBreathe').checked,
     bookAspect: parseFloat(el('bookAspect').value) || 0.75,
