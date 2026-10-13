@@ -1306,21 +1306,32 @@ async function polaDrop(th) {
   current = { path: th.path, index: 0, nw: th.nw, nh: th.nh };
   if (infoVisible) updateInfo();
 
+  // 「拿在手上」的大陰影是獨立一層，只淡出它的 opacity；
+  // 不直接補間 box-shadow（那會讓每一幀都在主執行緒重畫，是先前 lag 的主因）。
+  const lift = document.createElement('div');
+  lift.className = 'lift';
+  node.appendChild(lift);
+  const timing = { duration: P.dropMs, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'forwards' };
   const anim = node.animate([
-    { transform: start, opacity: 0, boxShadow: '0 30px 70px rgba(0,0,0,0.45)' },
+    { transform: start, opacity: 0 },
     { opacity: 1, offset: 0.3 },
-    { transform: end, opacity: 1, boxShadow: '0 2px 4px rgba(0,0,0,0.35), 0 10px 26px rgba(0,0,0,0.45)' },
-  ], { duration: P.dropMs, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'forwards' });
+    { transform: end, opacity: 1 },
+  ], timing);
+  const liftAnim = lift.animate([{ opacity: 1 }, { opacity: 0 }], timing);
   await anim.finished.catch(() => {});
-  // 終點寫回 style 再拿掉動畫（陰影回到 CSS 預設），之後這張完全靜止
+  // 終點寫回 style 再拿掉動畫，之後這張完全靜止
   node.style.transform = end;
   node.style.opacity = '';
   anim.cancel();
+  liftAnim.cancel();
+  lift.remove();
 }
 
 // 整疊淡出 → 清空 → 恢復
 async function polaClear() {
   const pile = el('polaPile');
+  pile.style.willChange = 'opacity, transform';
+  void pile.offsetWidth;
   pile.classList.add('clear');
   await sleep(P.fadeMs);
   pile.querySelectorAll('canvas').forEach(freeCanvas);
@@ -1330,6 +1341,7 @@ async function polaClear() {
   pile.classList.remove('clear');
   void pile.offsetWidth;
   pile.style.transition = '';
+  pile.style.willChange = '';
 }
 
 async function polaLoop() {
@@ -1347,8 +1359,9 @@ async function polaLoop() {
     }
     if (polaCount >= P.stack) await polaClear();
     if (wallStopped) return;
-    pending = prepare();
     await polaDrop(th);
+    // 落地後才開始準備下一張，避免解碼／縮圖跟落下動畫搶資源
+    pending = prepare();
     await sleep(P.holdMs);
   }
 }
