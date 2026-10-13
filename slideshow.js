@@ -274,6 +274,8 @@ function exitNow(e) {
   if (e) e.preventDefault();
   wallStopped = true;
   if (typeof reelAnim !== 'undefined' && reelAnim) reelAnim.pause();
+  if (typeof filmAnim !== 'undefined' && filmAnim) filmAnim.pause();
+  if (typeof cvAnim !== 'undefined' && cvAnim) cvAnim.pause();
   window.api.exitSlideshow();
 }
 document.addEventListener('mousedown', exitNow);
@@ -2618,10 +2620,486 @@ async function bookStart() {
   if (await bookBuild()) bookLoop();
 }
 
+// ==================== 馬賽克組合模式（Mosaic）====================
+// 流程：挑一張目標圖 → 依格子算出每格平均色 → 從「縮圖池」挑顏色最接近的小圖填進去 →
+//       小圖一格格出現（隨機／掃過／由中心擴散），同時鏡頭由近拉遠，看出大圖輪廓 →
+//       停留 → 原圖在上面淡入 → 停留 → 淡出換下一張。
+// 縮圖池：每張圖做一個正方形小縮圖（ImageBitmap）並記下平均色；開頭先做一小批就開始，
+//         其餘在背景慢慢補到上限；池滿後每輪換掉一部分，保持新鮮。
+// 效能：整幅馬賽克畫在一張 canvas 上（只在拼的過程中重畫），拉遠只動 canvas 的 transform。
+let mosaicMode = false;
+let MS = null;
+let msPool = [];           // { bmp, r, g, b, path }
+let msPoolBusy = false;
+let msQ = 1;               // canvas 解析度倍率（拉遠時才不會太糊）
+
+function mosaicSettings() {
+  return {
+    tile: Math.max(8, num(cfg.mosaicTile, 32)),          // 每格大小（px）
+    pool: Math.max(10, num(cfg.mosaicPool, 80)),          // 縮圖池張數上限
+    tint: num(cfg.mosaicTint, 35) / 100,                  // 每格往目標色調整的比例
+    order: cfg.mosaicOrder || 'random',                   // random / sweep / center
+    buildMs: Math.max(200, num(cfg.mosaicBuildMs, 4000)), // 拼出來的時間
+    holdMs: num(cfg.mosaicHoldMs, 3000),                  // 馬賽克停留
+    revealMs: num(cfg.mosaicRevealMs, 2000),              // 原圖淡入
+    origMs: num(cfg.mosaicOrigMs, 3000),                  // 原圖停留
+    zoom: Math.max(1, num(cfg.mosaicZoom, 3)),            // 起始放大倍率（1 = 不拉遠）
+  };
+}
+
+const msTileRes = () => Math.min(192, Math.round(MS.tile * (window.devicePixelRatio || 1) * msQ));
+
+// 一張圖 → 正方形小縮圖 + 平均色
+async function msMakeTile(path) {
+  const img = await loadFull(path);
+  if (!img) return null;
+  const nw = img.naturalWidth, nh = img.naturalHeight, s = Math.min(nw, nh);
+  const T = msTileRes();
+  let bmp = null;
+  try {
+    bmp = await createImageBitmap(img, Math.round((nw - s) / 2), Math.round((nh - s) / 2), s, s,
+      { resizeWidth: T, resizeHeight: T, resizeQuality: 'medium' });
+  } catch { bmp = null; }
+  img.src = '';
+  if (!bmp) return null;
+  const c = document.createElement('canvas');
+  c.width = c.height = 8;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0, 8, 8);
+  const d = ctx.getImageData(0, 0, 8, 8).data;
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+  return { bmp, r: r / 64, g: g / 64, b: b / 64, path };
+}
+
+const msPoolTarget = () => Math.min(MS.pool, images.length);
+
+// 補縮圖池到 n 張（背景執行，一次一張）
+async function msGrow(n) {
+  if (msPoolBusy) return;
+  msPoolBusy = true;
+  let fails = 0;
+  while (!wallStopped && msPool.length < n && fails < images.length) {
+    const p = nextImagePathCycle();
+    if (!p) break;
+    if (msPool.some((t) => t.path === p)) { fails++; continue; }
+    const t = await msMakeTile(p);
+    if (t) msPool.push(t); else fails++;
+    if (!msPool.length) continue;
+    const m = el('mosaicMsg');
+    if (m.textContent) m.textContent = window.I18N.t('mosaic.loading', { n: msPool.length, total: n });
+  }
+  msPoolBusy = false;
+}
+
+// 池滿後每輪換掉約 10%，讓馬賽克用到的小圖持續變化
+function msRefresh() {
+  if (images.length <= MS.pool || msPool.length < MS.pool) { msGrow(msPoolTarget()); return; }
+  const k = Math.max(1, Math.round(MS.pool * 0.1));
+  for (let i = 0; i < k && msPool.length; i++) {
+    const j = Math.floor(Math.random() * msPool.length);
+    msPool[j].bmp.close();
+    msPool.splice(j, 1);
+  }
+  msGrow(msPoolTarget());
+}
+
+// 目標圖在畫面上的矩形（依縮放模式：cover 填滿，其餘 contain）
+function msRect(nw, nh) {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const s = cfg.scaleMode === 'cover' ? Math.max(vw / nw, vh / nh) : Math.min(vw / nw, vh / nh);
+  const w = nw * s, h = nh * s;
+  return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+}
+
+// 準備一輪：載入目標圖、算每格平均色、為每格挑小圖
+async function msPrepare() {
+  let full = null, path = null;
+  for (let tries = 0; tries < images.length && !full && !wallStopped; tries++) {
+    path = nextImagePathCycle();
+    if (!path) break;
+    full = await loadFull(path);
+  }
+  if (!full || wallStopped) return null;
+  const nw = full.naturalWidth, nh = full.naturalHeight;
+  const rect = msRect(nw, nh);
+  const cols = Math.max(4, Math.round(rect.w / MS.tile)), rows = Math.max(3, Math.round(rect.h / MS.tile));
+  // 把目標圖縮成 cols×rows：每個像素就是一格的平均色
+  const sc = document.createElement('canvas');
+  sc.width = cols; sc.height = rows;
+  const sctx = sc.getContext('2d', { willReadFrequently: true });
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(full, 0, 0, cols, rows);
+  const px = sctx.getImageData(0, 0, cols, rows).data;
+  sc.width = sc.height = 0;
+
+  // 挑小圖：顏色距離（redmean 加權）＋ 使用次數懲罰，並避開左邊、上面相同的
+  const pool = msPool.slice();
+  const n = cols * rows;
+  const assign = new Int32Array(n).fill(-1);
+  const uses = new Float32Array(pool.length);
+  const avg = n / pool.length;
+  const order = shuffleArr(Array.from({ length: n }, (_, i) => i));
+  for (const i of order) {
+    const r = px[i * 4], g = px[i * 4 + 1], b = px[i * 4 + 2];
+    const left = i % cols ? assign[i - 1] : -1, up = i >= cols ? assign[i - cols] : -1;
+    let best = 0, bestCost = Infinity;
+    for (let k = 0; k < pool.length; k++) {
+      if (pool.length > 2 && (k === left || k === up)) continue;
+      const t = pool[k], rm = (r + t.r) / 2;
+      const dr = r - t.r, dg = g - t.g, db = b - t.b;
+      const dist = Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
+      const cost = dist + (uses[k] / avg) * 40;
+      if (cost < bestCost) { bestCost = cost; best = k; }
+    }
+    assign[i] = best;
+    uses[best]++;
+  }
+  return { full, path, nw, nh, rect, cols, rows, px, pool, assign };
+}
+
+// 出現順序
+function msOrder(job) {
+  const { cols, rows } = job, n = cols * rows;
+  const idx = Array.from({ length: n }, (_, i) => i);
+  if (MS.order === 'random') return shuffleArr(idx);
+  const key = new Float32Array(n);
+  const cx = (cols - 1) / 2, cy = (rows - 1) / 2;
+  for (let i = 0; i < n; i++) {
+    const c = i % cols, r = Math.floor(i / cols);
+    key[i] = MS.order === 'sweep'
+      ? c / cols + r / rows * 0.6 + Math.random() * 0.25
+      : Math.hypot((c - cx) / cols, (r - cy) / rows) + Math.random() * 0.12;
+  }
+  return idx.sort((a, b) => key[a] - key[b]);
+}
+
+// 拼：在 buildMs 內分批畫完，同時鏡頭由 zoom 倍拉遠到 1 倍
+async function msBuild(job) {
+  const cv = el('mosaicCanvas');
+  const k = (window.devicePixelRatio || 1) * msQ;
+  cv.width = Math.round(window.innerWidth * k);
+  cv.height = Math.round(window.innerHeight * k);
+  const ctx = cv.getContext('2d', { alpha: false });
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.imageSmoothingQuality = 'medium';
+
+  const { rect, cols, rows, px, pool, assign } = job;
+  const tw = rect.w / cols, th = rect.h / rows;
+  const gap = MS.tile >= 20 ? 1 : 0;           // 格線，看得出是一格一格
+  const order = msOrder(job);
+
+  // 鏡頭：從目標圖內隨機一點放大 zoom 倍開始，拉遠到 1 倍
+  cv.style.transition = 'none';
+  cv.style.transformOrigin = `${(rect.x + rect.w * (0.3 + Math.random() * 0.4)).toFixed(0)}px ${(rect.y + rect.h * (0.3 + Math.random() * 0.4)).toFixed(0)}px`;
+  cv.style.transform = `scale(${MS.zoom})`;
+  void cv.offsetWidth;
+  el('mosaic').classList.remove('fade');
+  if (MS.zoom > 1) {
+    cv.style.transition = `transform ${MS.buildMs + MS.holdMs}ms cubic-bezier(.3,0,.2,1)`;
+    cv.style.transform = 'scale(1)';
+  }
+
+  const t0 = performance.now();
+  let done = 0;
+  while (done < order.length && !wallStopped) {
+    await new Promise((r) => requestAnimationFrame(r));
+    const want = Math.min(order.length, Math.ceil(order.length * (performance.now() - t0) / MS.buildMs));
+    for (; done < want; done++) {
+      const i = order[done];
+      const c = i % cols, r = Math.floor(i / cols);
+      const x = rect.x + c * tw, y = rect.y + r * th;
+      ctx.drawImage(pool[assign[i]].bmp, x, y, tw - gap, th - gap);
+      if (MS.tint > 0) {
+        ctx.fillStyle = `rgba(${px[i * 4]},${px[i * 4 + 1]},${px[i * 4 + 2]},${MS.tint})`;
+        ctx.fillRect(x, y, tw - gap, th - gap);
+      }
+    }
+  }
+}
+
+async function msLoop() {
+  let pending = msPrepare();
+  while (!wallStopped) {
+    const job = await pending;
+    if (wallStopped) return;
+    if (!job) { showMessage(window.I18N.t('msg.noImages')); return; }
+    current = { path: job.path, index: 0, nw: job.nw, nh: job.nh };
+    if (infoVisible) updateInfo();
+
+    await msBuild(job);
+    if (wallStopped) return;
+    msRefresh();                 // 換掉一部分池子（背景）
+    pending = msPrepare();       // 下一輪在背景先準備
+    await sleep(MS.holdMs);
+    if (wallStopped) return;
+
+    // 原圖淡入
+    const im = el('mosaicImg');
+    im.src = job.full.src;
+    try { await im.decode(); } catch { /* 解不開就直接顯示 */ }
+    im.classList.add('on');
+    await sleep(MS.revealMs + MS.origMs);
+    if (wallStopped) return;
+
+    // 淡出 → 清空
+    el('mosaic').classList.add('fade');
+    await sleep(600);
+    im.classList.remove('on');
+    im.removeAttribute('src');
+    job.full.src = '';
+  }
+}
+
+async function mosaicStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  mosaicMode = true;
+  wallStopped = false;
+  MS = mosaicSettings();
+  msQ = Math.min(2, MS.zoom);
+  // canvas 最長邊不超過 4096，避免低階機器吃不消
+  msQ = Math.min(msQ, 4096 / (Math.max(window.innerWidth, window.innerHeight) * (window.devicePixelRatio || 1)));
+  msQ = Math.max(1, msQ);
+  const r = document.documentElement.style;
+  r.setProperty('--mosaic-reveal-ms', MS.revealMs + 'ms');
+  r.setProperty('--mosaic-fit', cfg.scaleMode === 'cover' ? 'cover' : 'contain');
+  document.body.classList.add('mosaic-mode');
+  el('mosaic').classList.add('fade');
+  // 先做一小批小圖就開始，其餘背景補
+  const first = Math.min(msPoolTarget(), 24);
+  const m = el('mosaicMsg');
+  m.textContent = window.I18N.t('mosaic.loading', { n: 0, total: first });
+  await msGrow(first);
+  m.textContent = '';
+  if (wallStopped) return;
+  if (msPool.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  msGrow(msPoolTarget());
+  msLoop();
+}
+
+// ==================== 無限畫布漫遊模式（Canvas）====================
+// 流程：照片散布在一大張「世界」上（鬆散格狀＋隨機偏移、大小、傾斜）→
+//       鏡頭飛到某一張（先拉遠、平移、再拉近）→ 停下來看（換上原始解析度）→
+//       停留期間把畫面外的幾張換成新照片 → 飛往下一張 → …
+// 鏡頭：#cvWorld 的 transform ＝ translate(畫面中心) rotate(−r) scale(s) translate(−x, −y)，
+//       四個函式在每個關鍵影格都一樣 → 各自內插：位置在世界座標中線性移動、縮放獨立。
+//       飛行取 24 個取樣點：位置 ease-in-out、縮放在對數空間內插並在中段拉遠。
+let canvasMode = false;
+let CV = null;
+let cvItems = [];      // { node, pic, canvas, img, path, nw, nh, cx, cy, w, h, rot, gx, gy }
+let cvCam = { x: 0, y: 0, s: 1, r: 0 };
+let cvFocus = null;
+let cvAnim = null;
+let cvNeedsRebuild = false;
+const CV_CELL = 1000;   // 世界座標中每格大小
+
+function canvasSettings() {
+  return {
+    count: Math.max(6, Math.min(80, num(cfg.cnvCount, 30))),
+    size: num(cfg.cnvSize, 70) / 100,          // 照片占格子的大小
+    rotate: num(cfg.cnvRotate, 4),             // 最大傾斜
+    view: num(cfg.cnvView, 80) / 100,          // 停下時照片占畫面
+    flyMs: Math.max(300, num(cfg.cnvFlyMs, 3500)),
+    holdMs: num(cfg.cnvHoldMs, 4000),
+    replace: Math.max(0, num(cfg.cnvReplace, 3)),
+    radius: num(cfg.cnvRadius, 6),
+    frame: cfg.cnvFrame === true,
+    thumbScale: num(cfg.cnvThumbScale, 1),
+  };
+}
+
+const cvTx = (c) => `translate(${(window.innerWidth / 2).toFixed(1)}px, ${(window.innerHeight / 2).toFixed(1)}px) rotate(${(-(c.r || 0)).toFixed(3)}deg) scale(${c.s.toFixed(5)}) translate(${(-c.x).toFixed(2)}px, ${(-c.y).toFixed(2)}px)`;
+
+function cvSetCam(c) {
+  cvCam = { ...c };
+  el('cvWorld').style.transform = cvTx(cvCam);
+}
+
+// 一張照片的世界尺寸：放進 (CELL×size×隨機 0.75～1) 的方框，保留原圖比例（限制 1:2～2:1）
+function cvItemSize(nw, nh) {
+  const box = CV_CELL * CV.size * (0.75 + Math.random() * 0.25);
+  const a = Math.max(0.5, Math.min(2, nw / nh));
+  return a >= 1 ? { w: box, h: box / a } : { w: box * a, h: box };
+}
+
+async function cvLoadThumb(path) {
+  // 飛行中看到的縮圖解析度不用高（停下時會換上原圖）
+  const L = Math.round(480 * CV.thumbScale * Math.min(2, window.devicePixelRatio || 1));
+  return makeBoxThumb(path, (nw, nh) => {
+    const a = Math.max(0.5, Math.min(2, nw / nh));
+    return a >= 1 ? { w: L, h: Math.round(L / a) } : { w: Math.round(L * a), h: L };
+  }, 1);
+}
+
+function cvPlace(it) {
+  const pad = CV.frame ? Math.round(Math.min(it.w, it.h) * 0.045) : 0;
+  Object.assign(it.node.style, {
+    width: (it.w + pad * 2).toFixed(0) + 'px', height: (it.h + pad * 2).toFixed(0) + 'px',
+    padding: CV.frame ? pad + 'px' : '',
+    transform: `translate(${(it.cx - it.w / 2 - pad).toFixed(1)}px, ${(it.cy - it.h / 2 - pad).toFixed(1)}px) rotate(${it.rot.toFixed(2)}deg)`,
+  });
+}
+
+function cvSetImage(it, th) {
+  if (it.canvas) { freeCanvas(it.canvas); it.canvas.remove(); }
+  if (it.img) { it.img.remove(); it.img = null; }
+  it.pic.insertBefore(th.canvas, it.pic.firstChild);
+  const sz = cvItemSize(th.nw, th.nh);
+  Object.assign(it, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh, w: sz.w, h: sz.h });
+  it.cx = (it.gx + 0.5) * CV_CELL + (Math.random() - 0.5) * CV_CELL * 0.22;
+  it.cy = (it.gy + 0.5) * CV_CELL + (Math.random() - 0.5) * CV_CELL * 0.22;
+  it.rot = (Math.random() * 2 - 1) * CV.rotate;
+  cvPlace(it);
+}
+
+// 停在這張時，鏡頭的位置與縮放（含白框）
+function cvCamFor(it) {
+  const pad = CV.frame ? Math.min(it.w, it.h) * 0.045 * 2 : 0;
+  const s = Math.min(window.innerWidth * CV.view / (it.w + pad), window.innerHeight * CV.view / (it.h + pad));
+  return { x: it.cx, y: it.cy, s, r: it.rot }; // 鏡頭跟著照片傾斜，停下時照片是正的
+}
+
+// 鏡頭 c 下，這張是否（部分）在畫面內
+function cvVisible(it, c, margin = 0.15) {
+  const hw = window.innerWidth / 2 / c.s, hh = window.innerHeight / 2 / c.s;
+  const r = Math.max(it.w, it.h) * 0.75;
+  return Math.abs(it.cx - c.x) < hw * (1 + margin) + r && Math.abs(it.cy - c.y) < hh * (1 + margin) + r;
+}
+
+async function cvBuild() {
+  const stage = el('cvStage');
+  if (cvItems.length) { stage.classList.add('fade'); await sleep(700); }
+  if (wallStopped) return false;
+  cvItems.forEach((it) => { freeCanvas(it.canvas); it.node.remove(); });
+  cvItems = [];
+  el('cnv').classList.toggle('frame', CV.frame);
+  const n = Math.min(CV.count, Math.max(6, images.length));
+  const cols = Math.max(3, Math.round(Math.sqrt(n * 16 / 9))), rows = Math.ceil(n / cols);
+  const world = el('cvWorld');
+  for (let i = 0; i < n; i++) {
+    const th = await cvLoadThumb(nextImagePathCycle() || '');
+    if (wallStopped) return false;
+    if (!th) continue;
+    const node = document.createElement('div');
+    node.className = 'cvi';
+    const pic = document.createElement('div');
+    pic.className = 'cvi-pic';
+    node.appendChild(pic);
+    world.appendChild(node);
+    const it = { node, pic, canvas: null, img: null, gx: i % cols, gy: Math.floor(i / cols) };
+    cvSetImage(it, th);
+    cvItems.push(it);
+  }
+  if (cvItems.length === 0) { showMessage(window.I18N.t('msg.noImages')); return false; }
+  cvFocus = rand(cvItems);
+  cvSetCam(cvCamFor(cvFocus));
+  stage.classList.remove('fade');
+  await sleep(700);
+  return true;
+}
+
+// 下一個目的地：不要太近也不要太遠（優先 1.2～3 格距離）
+function cvPickNext() {
+  const others = cvItems.filter((it) => it !== cvFocus);
+  if (!others.length) return cvFocus;
+  const d = (it) => Math.hypot(it.cx - cvFocus.cx, it.cy - cvFocus.cy) / CV_CELL;
+  const good = others.filter((it) => d(it) >= 1.2 && d(it) <= 3);
+  return rand(good.length ? good : others);
+}
+
+// 飛行：24 個取樣點，位置 ease-in-out、縮放對數內插並在中段拉遠到能同時看到起訖兩張
+function cvFly(to) {
+  const A = cvCam, B = cvCamFor(to);
+  const dx = Math.abs(B.x - A.x), dy = Math.abs(B.y - A.y);
+  const fit = Math.min(window.innerWidth / (dx + CV_CELL), window.innerHeight / (dy + CV_CELL)) * 0.9;
+  const sMid = Math.min(A.s, B.s, fit);
+  const la = Math.log(A.s), lb = Math.log(B.s), lm = Math.log(sMid);
+  const bump = Math.max(0, (la + lb) / 2 - lm);
+  const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const kf = [];
+  const N = 24;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, u = ease(t);
+    const s = Math.exp(la + (lb - la) * u - bump * Math.sin(Math.PI * t));
+    kf.push({ transform: cvTx({ x: A.x + (B.x - A.x) * u, y: A.y + (B.y - A.y) * u, s, r: (A.r || 0) + ((B.r || 0) - (A.r || 0)) * u }) });
+  }
+  const world = el('cvWorld');
+  const anim = world.animate(kf, { duration: CV.flyMs, easing: 'linear', fill: 'forwards' });
+  cvAnim = anim;
+  return anim.finished.catch(() => {}).then(() => {
+    cvSetCam(B);
+    anim.cancel();
+    if (cvAnim === anim) cvAnim = null;
+  });
+}
+
+// 停下：換上原始解析度
+async function cvSharpen(it) {
+  const full = await loadFull(it.path);
+  if (!full || wallStopped || it !== cvFocus) return;
+  const img = document.createElement('img');
+  img.src = full.src;
+  try { await img.decode(); } catch { /* ignore */ }
+  if (it !== cvFocus) return;
+  it.pic.appendChild(img);
+  it.img = img;
+  requestAnimationFrame(() => img.classList.add('on'));
+}
+
+function cvBlur(it) {
+  if (it && it.img) { it.img.remove(); it.img = null; }
+}
+
+// 停留期間：把現在和下一段飛行都看不到的幾張換成新照片
+async function cvReplaceSome(nextCam) {
+  const cands = shuffleArr(cvItems.filter((it) => it !== cvFocus
+    && !cvVisible(it, cvCam, 0.3) && !cvVisible(it, nextCam, 0.3)));
+  for (const it of cands.slice(0, CV.replace)) {
+    const th = await cvLoadThumb(nextImagePathCycle() || '');
+    if (wallStopped) return;
+    if (th && !cvVisible(it, cvCam, 0.3)) cvSetImage(it, th);
+    else if (th) freeCanvas(th.canvas);
+  }
+}
+
+async function cvLoop() {
+  while (!wallStopped) {
+    if (cvNeedsRebuild) {
+      cvNeedsRebuild = false;
+      if (!(await cvBuild())) return;
+    }
+    current = { path: cvFocus.path, index: 0, nw: cvFocus.nw, nh: cvFocus.nh };
+    if (infoVisible) updateInfo();
+    const next = cvPickNext();
+    // 停留：換原圖、換掉看不到的幾張，至少停 holdMs
+    await Promise.all([cvSharpen(cvFocus), cvReplaceSome(cvCamFor(next)), sleep(CV.holdMs)]);
+    if (wallStopped) return;
+    const from = cvFocus;
+    cvFocus = next;
+    setTimeout(() => cvBlur(from), CV.flyMs * 0.4); // 拉遠後再拿掉原圖，看不出切換
+    await cvFly(next);
+  }
+}
+
+async function canvasStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  canvasMode = true;
+  wallStopped = false;
+  CV = canvasSettings();
+  document.documentElement.style.setProperty('--cnv-radius', CV.radius + 'px');
+  document.body.classList.add('canvas-mode');
+  el('cvStage').classList.add('fade');
+  if (await cvBuild()) cvLoop();
+}
+
 // 視窗大小改變時重建圖牆（欄寬變了，高度要重算）；輪盤則在下一輪開始前重建
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   if (cfMode) { cfNeedsRebuild = true; return; }
+  if (canvasMode) { cvNeedsRebuild = true; return; }
+  if (mosaicMode) return; // 每一輪都依當下視窗大小重新計算
   if (ringMode) { ringNeedsRebuild = true; return; }
   if (bookMode) { bookNeedsRebuild = true; return; }
   if (collageMode) { ccNeedsRebuild = true; return; }
@@ -2669,5 +3147,7 @@ window.api.onConfig(async (config) => {
   else if (cfg.effect === 'filmstrip') filmStart();
   else if (cfg.effect === 'ring') ringStart();
   else if (cfg.effect === 'book') bookStart();
+  else if (cfg.effect === 'mosaic') mosaicStart();
+  else if (cfg.effect === 'canvas') canvasStart();
   else start();
 });

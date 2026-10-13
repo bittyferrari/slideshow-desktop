@@ -100,7 +100,10 @@ async function restoreSettings() {
   restoreWallFields(s, BOOK_FIELDS);
   restoreAspect('bookAspect', s.bookAspect);
   if (typeof s.bookPaper === 'string') el('bookPaper').value = s.bookPaper;
-  for (const k of ['filmGrain', 'filmShake', 'filmBreathe', 'ringBreathe', 'bookBreathe']) {
+  restoreWallFields(s, MOSAIC_FIELDS);
+  if (typeof s.mosaicOrder === 'string') el('mosaicOrder').value = s.mosaicOrder;
+  restoreWallFields(s, CNV_FIELDS);
+  for (const k of ['filmGrain', 'filmShake', 'filmBreathe', 'ringBreathe', 'bookBreathe', 'cnvFrame']) {
     if (typeof s[k] === 'boolean') el(k).checked = s[k];
   }
   restoreFx(s);
@@ -150,7 +153,7 @@ const REEL_FIELDS = [
 ];
 
 // 非「一般輪播」的播放模式（存檔時 effect 直接記模式名稱）
-const MODES = ['wall', 'reel', 'polaroid', 'coverflow', 'collage', 'filmstrip', 'ring', 'book'];
+const MODES = ['wall', 'reel', 'polaroid', 'coverflow', 'collage', 'filmstrip', 'ring', 'book', 'mosaic', 'canvas'];
 
 // ---- 拍立得散落設定（格式同上）----
 const POLA_FIELDS = [
@@ -234,6 +237,31 @@ const BOOK_FIELDS = [
   ['bookFlyMs', 'bookFly', 1000, 1000],
   ['bookBigScale', 'bookBigScale', 100, 1],
   ['bookThumbScale', 'bookThumbScale', 1, 1],
+];
+
+// ---- 馬賽克組合設定（格式同上）----
+const MOSAIC_FIELDS = [
+  ['mosaicTile', 'mosaicTile', 32, 1],
+  ['mosaicPool', 'mosaicPool', 80, 1],
+  ['mosaicTint', 'mosaicTint', 35, 1],
+  ['mosaicZoom', 'mosaicZoom', 3, 1],
+  ['mosaicBuildMs', 'mosaicBuild', 4000, 1000],
+  ['mosaicHoldMs', 'mosaicHold', 3000, 1000],
+  ['mosaicRevealMs', 'mosaicReveal', 2000, 1000],
+  ['mosaicOrigMs', 'mosaicOrig', 3000, 1000],
+];
+
+// ---- 無限畫布漫遊設定（格式同上）----
+const CNV_FIELDS = [
+  ['cnvCount', 'cnvCount', 30, 1],
+  ['cnvSize', 'cnvSize', 70, 1],
+  ['cnvRotate', 'cnvRotate', 4, 1],
+  ['cnvView', 'cnvView', 80, 1],
+  ['cnvFlyMs', 'cnvFly', 3500, 1000],
+  ['cnvHoldMs', 'cnvHold', 4000, 1000],
+  ['cnvReplace', 'cnvReplace', 3, 1],
+  ['cnvRadius', 'cnvRadius', 6, 1],
+  ['cnvThumbScale', 'cnvThumbScale', 1, 1],
 ];
 
 // 比例下拉選單：找最接近的選項（存的是 1.333 這類小數）
@@ -369,6 +397,8 @@ function toggleEffectOpts() {
   el('filmOpts').classList.toggle('on', mode === 'filmstrip');
   el('ringOpts').classList.toggle('on', mode === 'ring');
   el('bookOpts').classList.toggle('on', mode === 'book');
+  el('mosaicOpts').classList.toggle('on', mode === 'mosaic');
+  el('cnvOpts').classList.toggle('on', mode === 'canvas');
   el('normalOpts').classList.toggle('off', mode !== 'normal');
   el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
     w.classList.toggle('on', w.dataset.fx === ef);
@@ -459,6 +489,8 @@ el('start').addEventListener('click', async () => {
     bookAspect: parseFloat(el('bookAspect').value) || 0.75,
     bookPaper: el('bookPaper').value,
     bookBreathe: el('bookBreathe').checked,
+    mosaicOrder: el('mosaicOrder').value,
+    cnvFrame: el('cnvFrame').checked,
     fx: collectFx(),
     ...collectWallFields(),
     ...collectWallFields(REEL_FIELDS),
@@ -468,6 +500,8 @@ el('start').addEventListener('click', async () => {
     ...collectWallFields(FILM_FIELDS),
     ...collectWallFields(RING_FIELDS),
     ...collectWallFields(BOOK_FIELDS),
+    ...collectWallFields(MOSAIC_FIELDS),
+    ...collectWallFields(CNV_FIELDS),
   };
   // 儲存設定，下次開啟時還原
   await window.api.saveSettings(config);

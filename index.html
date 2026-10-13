@@ -61,6 +61,8 @@
     #collageOpts.on, #filmOpts.on { display: block; }
     #ringOpts, #bookOpts { display: none; margin-top: -6px; }
     #ringOpts.on, #bookOpts.on { display: block; }
+    #mosaicOpts, #cnvOpts { display: none; margin-top: -6px; }
+    #mosaicOpts.on, #cnvOpts.on { display: block; }
     #normalOpts.off { display: none; }
     #fxOpts { margin-top: -6px; }
     .fxPanel { display: none; margin-bottom: 18px; }
@@ -126,6 +128,8 @@
       <option value="filmstrip" data-i18n="effect.filmstrip">電影膠卷</option>
       <option value="ring" data-i18n="effect.ring">3D 旋轉相簿</option>
       <option value="book" data-i18n="effect.book">翻頁書</option>
+      <option value="mosaic" data-i18n="effect.mosaic">馬賽克組合</option>
+      <option value="canvas" data-i18n="effect.canvas">無限畫布漫遊</option>
     </select>
   </div>
 
@@ -1064,6 +1068,154 @@
       </div>
       </div>
       <div class="hint" style="margin-bottom:12px" data-i18n="book.hint"></div>
+    </div>
+  </div>
+
+  <div id="mosaicOpts">
+    <div class="sub">
+      <div class="title" data-i18n="mosaic.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="mosaic.tile"></label>
+        <div class="inline">
+          <input type="number" id="mosaicTile" min="8" max="120" step="2" value="32" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.pool"></label>
+        <div class="inline">
+          <input type="number" id="mosaicPool" min="10" max="300" step="10" value="80" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.tint"></label>
+        <div class="inline">
+          <input type="number" id="mosaicTint" min="0" max="80" step="5" value="35" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.order"></label>
+        <select id="mosaicOrder">
+          <option value="random" selected data-i18n="order.random"></option>
+          <option value="sweep" data-i18n="order.sweep"></option>
+          <option value="center" data-i18n="order.center"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.zoom"></label>
+        <div class="inline">
+          <input type="number" id="mosaicZoom" min="1" max="6" step="0.5" value="3" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.build"></label>
+        <div class="inline">
+          <input type="number" id="mosaicBuild" min="0.2" max="30" step="0.5" value="4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.hold"></label>
+        <div class="inline">
+          <input type="number" id="mosaicHold" min="0" max="60" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.reveal"></label>
+        <div class="inline">
+          <input type="number" id="mosaicReveal" min="0.1" max="10" step="0.1" value="2" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="mosaic.orig"></label>
+        <div class="inline">
+          <input type="number" id="mosaicOrig" min="0" max="60" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="mosaic.hint"></div>
+    </div>
+  </div>
+
+  <div id="cnvOpts">
+    <div class="sub">
+      <div class="title" data-i18n="cnv.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="cnv.count"></label>
+        <div class="inline">
+          <input type="number" id="cnvCount" min="6" max="80" step="1" value="30" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.size"></label>
+        <div class="inline">
+          <input type="number" id="cnvSize" min="30" max="95" step="5" value="70" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.rotate"></label>
+        <div class="inline">
+          <input type="number" id="cnvRotate" min="0" max="20" step="1" value="4" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.view"></label>
+        <div class="inline">
+          <input type="number" id="cnvView" min="30" max="100" step="5" value="80" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.fly"></label>
+        <div class="inline">
+          <input type="number" id="cnvFly" min="0.3" max="20" step="0.1" value="3.5" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.hold"></label>
+        <div class="inline">
+          <input type="number" id="cnvHold" min="0" max="120" step="0.5" value="4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.replace"></label>
+        <div class="inline">
+          <input type="number" id="cnvReplace" min="0" max="20" step="1" value="3" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.radius"></label>
+        <div class="inline">
+          <input type="number" id="cnvRadius" min="0" max="40" step="1" value="6" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="cnv.thumb"></label>
+        <div class="inline">
+          <input type="number" id="cnvThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="cnvFrame" />
+          <label for="cnvFrame" data-i18n="cnv.frame"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="cnv.hint"></div>
     </div>
   </div>
 
