@@ -2113,10 +2113,517 @@ function filmStart() {
   filmLoop();
 }
 
+// ==================== 3D 旋轉相簿模式（Ring：旋轉木馬／立方體）====================
+// 旋轉木馬：N 張圖繞 Y 軸排成一圈，每次轉一格（ease-in-out）→ 正面停頓 → 再轉；
+//           每轉一格就把「正背面」那張換成新圖（轉到背面時看不清楚，換圖不突兀）。
+// 立方體：6 面，每次往左／右／上／下翻 90°。用 DOMMatrix 記錄目前方向，
+//         翻之前先算出「哪一面會轉到正面」，那一面此刻是側面（被正面擋住看不到），
+//         趁這時換成新圖，並把圖在面內轉 0/90/180/270° 讓它轉到正面時是正的。
+// 共通：整個環／立方體只改 #ringRot 一個 transform（transition 補間）；
+//       每隔幾格把正面那張用 hero 放大。
+let ringMode = false;
+let RG = null;
+let ringFaces = [];        // { node, inner, content, veil, canvas, path, nw, nh, m(本地方向矩陣，立方體用) }
+let ringF = 0;             // 旋轉木馬：目前正面的索引（可為任意整數）
+let ringO = null;          // 立方體：目前方向（DOMMatrix）
+let ringLastDir = null;
+let ringGeo = null;        // { w, h, R }
+let ringNeedsRebuild = false;
+
+function ringSettings() {
+  return {
+    shape: cfg.ringShape === 'cube' ? 'cube' : 'ring',
+    count: Math.max(5, Math.min(24, num(cfg.ringCount, 10))),  // 旋轉木馬張數
+    size: num(cfg.ringSize, 45) / 100,                          // 正面圖片高度占畫面短邊
+    aspect: num(cfg.ringAspect, 0.75),                          // 旋轉木馬每張比例（立方體固定正方形）
+    gap: num(cfg.ringGap, 30),                                  // 旋轉木馬每張之間的間距
+    tilt: num(cfg.ringTilt, 8),                                 // 從上方俯視的角度
+    dir: cfg.ringDir || 'left',                                 // left / right / random
+    moveMs: Math.max(100, num(cfg.ringMoveMs, 1400)),
+    holdMs: num(cfg.ringHoldMs, 2000),
+    dim: num(cfg.ringDim, 30) / 100,                            // 背面亮度
+    bigEvery: Math.max(0, num(cfg.ringBigEvery, 5)),
+    bigMs: num(cfg.ringBigMs, 3000),
+    flyMs: num(cfg.ringFlyMs, 1000),
+    bigScale: num(cfg.ringBigScale, 100) / 100,
+    radius: num(cfg.ringRadius, 10),
+    breathe: cfg.ringBreathe !== false,
+    thumbScale: num(cfg.ringThumbScale, 1),
+  };
+}
+
+function ringThumb() {
+  const { w, h } = ringGeo;
+  return nextBoxThumbCycle(() => ({ w, h }), RG.thumbScale);
+}
+
+function ringMakeFace(transform, w, h) {
+  const node = document.createElement('div');
+  node.className = 'rface';
+  Object.assign(node.style, { width: w + 'px', height: h + 'px', marginLeft: -w / 2 + 'px', marginTop: -h / 2 + 'px', transform });
+  const inner = document.createElement('div');
+  inner.className = 'rface-inner';
+  const content = document.createElement('div');
+  content.className = 'rface-content';
+  const veil = document.createElement('div');
+  veil.className = 'rface-veil';
+  inner.appendChild(content);
+  inner.appendChild(veil);
+  node.appendChild(inner);
+  el('ringRot').appendChild(node);
+  return { node, inner, content, veil, canvas: null, path: null, nw: 0, nh: 0 };
+}
+
+function ringSetImage(f, th) {
+  if (f.canvas) { freeCanvas(f.canvas); f.canvas.remove(); }
+  f.content.appendChild(th.canvas);
+  Object.assign(f, { canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh });
+}
+
+function ringFront() {
+  if (RG.shape === 'cube') return ringFaces.find((f) => ringNormalZ(ringO, f) > 0.9) || null;
+  return ringFaces[mod(ringF, ringFaces.length)];
+}
+
+function ringSetCurrent() {
+  const f = ringFront();
+  if (!f || !f.path) return;
+  current = { path: f.path, index: 0, nw: f.nw, nh: f.nh };
+  if (infoVisible) updateInfo();
+}
+
+// ---- 旋轉木馬 ----
+function ringCarouselTransform() {
+  const step = 360 / ringFaces.length;
+  return `translateZ(${(-ringGeo.R).toFixed(1)}px) rotateX(${-RG.tilt}deg) rotateY(${(-ringF * step).toFixed(3)}deg)`;
+}
+
+// 依每張相對正面的角度決定亮度（正面 0、正背面最暗）
+function ringCarouselVeils() {
+  const n = ringFaces.length, maxV = 1 - RG.dim;
+  ringFaces.forEach((f, i) => {
+    const a = ((i - ringF) * 2 * Math.PI) / n;
+    f.veil.style.opacity = (maxV * (1 - Math.cos(a)) / 2).toFixed(3);
+  });
+}
+
+// ---- 立方體 ----
+const CUBE_FACES = ['rotateY(0deg)', 'rotateY(90deg)', 'rotateY(180deg)', 'rotateY(-90deg)', 'rotateX(90deg)', 'rotateX(-90deg)'];
+const CUBE_STEPS = { left: 'rotateY(-90deg)', right: 'rotateY(90deg)', up: 'rotateX(90deg)', down: 'rotateX(-90deg)' };
+const CUBE_OPP = { left: 'right', right: 'left', up: 'down', down: 'up' };
+const dirVec = (m, x, y, z) => m.transformPoint(new DOMPoint(x, y, z, 0));
+
+function ringNormalZ(O, f) {
+  return dirVec(O.multiply(f.m), 0, 0, 1).z;
+}
+
+const m3d = (m) => `matrix3d(${[m.m11, m.m12, m.m13, m.m14, m.m21, m.m22, m.m23, m.m24, m.m31, m.m32, m.m33, m.m34, m.m41, m.m42, m.m43, m.m44].join(',')})`;
+
+function ringCubeTransform() {
+  return `translateZ(${(-ringGeo.R).toFixed(1)}px) rotateX(${-RG.tilt}deg) ${m3d(ringO)}`;
+}
+
+// 90° 旋轉的組合，元素一定是 -1 / 0 / 1；四捨五入避免浮點誤差累積
+function roundMatrix(m) {
+  const r = new DOMMatrix();
+  for (const k of ['m11', 'm12', 'm13', 'm21', 'm22', 'm23', 'm31', 'm32', 'm33']) r[k] = Math.round(m[k]);
+  return r;
+}
+
+// 在方向 O 下，面 f 的內容要轉幾度，看起來才是正的（螢幕上「上」朝上）
+function cubeUpright(O, f) {
+  for (const r of [0, 90, 180, 270]) {
+    const u = dirVec(O.multiply(f.m).multiply(new DOMMatrix().rotate(0, 0, r)), 0, -1, 0);
+    if (u.y < -0.9) return r;
+  }
+  return 0;
+}
+
+function cubeOrient(f, O) {
+  f.content.style.transform = `rotate(${cubeUpright(O, f)}deg)`;
+}
+
+function ringPickDir() {
+  if (RG.dir === 'left' || RG.dir === 'right') return RG.dir;
+  // random：立方體有傾斜時只左右翻（上下翻會讓頂面換圖被看到）
+  const opts = RG.shape === 'cube' && RG.tilt === 0 ? ['left', 'right', 'up', 'down'] : ['left', 'right'];
+  const pool = opts.filter((d) => d !== CUBE_OPP[ringLastDir]);
+  const d = rand(pool.length ? pool : opts);
+  ringLastDir = d;
+  return d;
+}
+
+async function ringBuild() {
+  const stage = el('ringStage');
+  if (ringFaces.length) { stage.classList.add('fade'); await sleep(500); }
+  if (wallStopped) return false;
+  ringFaces.forEach((f) => { freeCanvas(f.canvas); f.node.remove(); });
+  ringFaces = [];
+  const rot = el('ringRot');
+  rot.style.transition = 'none';
+  el('ring').classList.toggle('cube', RG.shape === 'cube');
+  const H = Math.max(60, Math.round(shortSide() * RG.size));
+  let faceTf;
+  if (RG.shape === 'cube') {
+    ringGeo = { w: H, h: H, R: H / 2 };
+    faceTf = CUBE_FACES.map((b) => b + ` translateZ(${H / 2}px)`);
+  } else {
+    const w = Math.max(20, Math.round(H * RG.aspect)), n = RG.count;
+    const R = (w + RG.gap) / (2 * Math.tan(Math.PI / n));
+    ringGeo = { w, h: H, R };
+    faceTf = Array.from({ length: n }, (_, i) => `rotateY(${(i * 360) / n}deg) translateZ(${R.toFixed(1)}px)`);
+  }
+  const r = document.documentElement.style;
+  r.setProperty('--ring-persp', Math.round(Math.max(1200, ringGeo.R * 4, H * 3)) + 'px');
+  for (let i = 0; i < faceTf.length; i++) {
+    const f = ringMakeFace(faceTf[i], ringGeo.w, ringGeo.h);
+    if (RG.shape === 'cube') f.m = new DOMMatrix(CUBE_FACES[i]);
+    ringFaces.push(f);
+  }
+  // 圖片：從正面開始往兩側填（張數比圖片多時也沒關係，會從頭再用）
+  for (const f of ringFaces) {
+    const th = await ringThumb();
+    if (wallStopped) return false;
+    if (!th) { showMessage(window.I18N.t('msg.noImages')); return false; }
+    ringSetImage(f, th);
+  }
+  ringF = 0;
+  ringO = new DOMMatrix();
+  if (RG.shape === 'cube') {
+    ringFaces.forEach((f) => cubeOrient(f, ringO));
+    rot.style.transform = ringCubeTransform();
+  } else {
+    rot.style.transform = ringCarouselTransform();
+    ringFaces.forEach((f) => { f.veil.style.transition = 'none'; });
+    ringCarouselVeils();
+  }
+  void rot.offsetWidth;
+  rot.style.transition = '';
+  ringFaces.forEach((f) => { f.veil.style.transition = ''; });
+  ringSetCurrent();
+  stage.classList.remove('fade');
+  await sleep(500);
+  return true;
+}
+
+// 轉一格
+async function ringStep() {
+  const d = ringPickDir();
+  if (RG.shape === 'cube') {
+    const O2 = roundMatrix(new DOMMatrix(CUBE_STEPS[d]).multiply(ringO));
+    const incoming = ringFaces.find((f) => ringNormalZ(O2, f) > 0.9);
+    if (incoming) {
+      // 這一面此刻在側面（被正面擋住），趁現在換圖並轉正
+      const th = await ringThumb();
+      if (wallStopped) return;
+      if (th) ringSetImage(incoming, th);
+      cubeOrient(incoming, O2);
+    }
+    ringO = O2;
+    el('ringRot').style.transform = ringCubeTransform();
+    ringSetCurrent();
+    await sleep(RG.moveMs);
+    return;
+  }
+  ringF += d === 'right' ? -1 : 1;
+  el('ringRot').style.transform = ringCarouselTransform();
+  ringCarouselVeils();
+  ringSetCurrent();
+  // 轉動期間把（轉完後的）正背面那張換成新圖
+  const n = ringFaces.length;
+  const back = ringFaces[mod(ringF + Math.round(n / 2), n)];
+  const [th] = await Promise.all([ringThumb(), sleep(RG.moveMs)]);
+  if (wallStopped) return;
+  if (th) ringSetImage(back, th);
+}
+
+async function ringSpotlight() {
+  const f = ringFront();
+  if (!f || !f.path) return;
+  const full = await loadFull(f.path);
+  if (wallStopped || !full) return;
+  wallHeroImg = full;
+  const dims = heroOpen(full, f.inner, RG.bigScale, RG.radius);
+  await sleep(RG.flyMs);
+  if (wallStopped) return;
+  heroSettled();
+  document.body.classList.add('big');
+  if (RG.breathe) el('heroImg').classList.add('breathe');
+  await sleep(RG.bigMs);
+  document.body.classList.remove('big');
+  if (wallStopped) return;
+  heroClose(f.inner, dims);
+  await sleep(RG.flyMs);
+  heroHide();
+  wallHeroImg = null;
+}
+
+async function ringLoop() {
+  let steps = 0;
+  while (!wallStopped) {
+    if (ringNeedsRebuild) {
+      ringNeedsRebuild = false;
+      if (!(await ringBuild())) return;
+    }
+    await sleep(RG.holdMs);
+    if (wallStopped) return;
+    if (RG.bigEvery > 0 && steps > 0 && steps % RG.bigEvery === 0) {
+      await ringSpotlight();
+      if (wallStopped) return;
+      await sleep(300);
+    }
+    await ringStep();
+    steps++;
+  }
+}
+
+async function ringStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  ringMode = true;
+  wallStopped = false;
+  RG = ringSettings();
+  const r = document.documentElement.style;
+  r.setProperty('--ring-move-ms', RG.moveMs + 'ms');
+  r.setProperty('--ring-radius', RG.radius + 'px');
+  r.setProperty('--fly-ms', RG.flyMs + 'ms');
+  r.setProperty('--breathe-ms', Math.max(4000, RG.bigMs * 2) + 'ms');
+  document.body.classList.add('ring-mode');
+  if (await ringBuild()) ringLoop();
+}
+
+// ==================== 翻頁書模式（Book）====================
+// 相簿風格：左右兩頁各貼一張照片 → 停留 → 右頁以書脊為軸翻過去（CSS 3D），
+//           背面就是下一個左頁，底下露出下一個右頁 → 停留 → …
+// 翻頁時：葉子正面漸暗、背面由暗轉亮；底下的右頁有翻起的投影、左頁在葉子落下時被投影。
+// 效能：同時最多 4 頁（左、右、葉子兩面）；只動葉子的 transform 和幾層陰影的 opacity。
+let bookMode = false;
+let BK = null;
+let bookL = null, bookR = null;   // { el, canvas, path, nw, nh }
+let bookGeo = null;
+let bookNeedsRebuild = false;
+
+const BOOK_PAPER = {
+  cream: ['#f2ede1', '#ddd6c6', '#c9c1b0'],
+  white: ['#fafafa', '#e2e2e2', '#cfcfcf'],
+  black: ['#1a1a1a', '#2c2c2c', '#3a3a3a'],
+};
+
+function bookSettings() {
+  return {
+    size: num(cfg.bookSize, 80) / 100,             // 頁高占畫面高
+    aspect: num(cfg.bookAspect, 0.75),              // 每頁寬/高
+    pad: num(cfg.bookPad, 8) / 100,                 // 紙張留白（占頁面短邊）
+    paper: BOOK_PAPER[cfg.bookPaper] ? cfg.bookPaper : 'cream',
+    flipMs: Math.max(200, num(cfg.bookFlipMs, 1400)),
+    holdMs: num(cfg.bookHoldMs, 3000),
+    bigEvery: Math.max(0, num(cfg.bookBigEvery, 0)),
+    bigMs: num(cfg.bookBigMs, 3000),
+    flyMs: num(cfg.bookFlyMs, 1000),
+    bigScale: num(cfg.bookBigScale, 100) / 100,
+    breathe: cfg.bookBreathe !== false,
+    thumbScale: num(cfg.bookThumbScale, 1),
+  };
+}
+
+function bookGeometry() {
+  let ph = window.innerHeight * BK.size, pw = ph * BK.aspect;
+  const maxW = window.innerWidth * 0.94;
+  if (pw * 2 > maxW) { const k = maxW / (pw * 2); pw *= k; ph *= k; }
+  pw = Math.round(pw); ph = Math.round(ph);
+  const pad = Math.round(Math.min(pw, ph) * BK.pad);
+  return { pw, ph, pad, iw: Math.max(8, pw - pad * 2), ih: Math.max(8, ph - pad * 2) };
+}
+
+function bookThumb() {
+  const { iw, ih } = bookGeo;
+  return nextBoxThumbCycle(() => ({ w: iw, h: ih }), BK.thumbScale);
+}
+
+// 一頁：紙張 + 照片 + 書脊陰影 + 翻頁用的暗化層與投影層
+function bookPage(th, side) {
+  const { pw, ph, pad, iw, ih } = bookGeo;
+  const page = document.createElement('div');
+  page.className = 'bpage ' + side;
+  Object.assign(page.style, { width: pw + 'px', height: ph + 'px' });
+  Object.assign(th.canvas.style, { left: pad + 'px', top: pad + 'px', width: iw + 'px', height: ih + 'px' });
+  page.appendChild(th.canvas);
+  for (const c of ['bspine', 'bcast', 'bshade']) {
+    const d = document.createElement('div');
+    d.className = c;
+    page.appendChild(d);
+  }
+  return { el: page, canvas: th.canvas, path: th.path, nw: th.nw, nh: th.nh };
+}
+
+function bookPlace(p, side) {
+  p.el.className = 'bpage ' + side;
+  p.el.style.left = (side === 'left' ? 0 : bookGeo.pw) + 'px';
+  p.el.style.transform = '';
+  p.el.style.zIndex = '1';
+}
+
+function bookFree(p) {
+  if (!p) return;
+  freeCanvas(p.canvas);
+  p.el.remove();
+}
+
+function bookSetCurrent(p) {
+  current = { path: p.path, index: 0, nw: p.nw, nh: p.nh };
+  if (infoVisible) updateInfo();
+}
+
+async function bookBuild() {
+  const spread = el('bookSpread');
+  if (bookL) { spread.classList.add('fade'); await sleep(500); }
+  if (wallStopped) return false;
+  bookFree(bookL); bookFree(bookR);
+  bookL = bookR = null;
+  spread.innerHTML = '';
+  bookGeo = bookGeometry();
+  const [paper, e1, e2] = BOOK_PAPER[BK.paper];
+  const r = document.documentElement.style;
+  r.setProperty('--book-paper', paper);
+  r.setProperty('--book-edge1', e1);
+  r.setProperty('--book-edge2', e2);
+  r.setProperty('--book-persp', Math.round(bookGeo.pw * 4) + 'px');
+  Object.assign(spread.style, {
+    width: bookGeo.pw * 2 + 'px', height: bookGeo.ph + 'px',
+    marginLeft: -bookGeo.pw + 'px', marginTop: -bookGeo.ph / 2 + 'px',
+  });
+  const a = await bookThumb(), b = a ? await bookThumb() : null;
+  if (wallStopped) return false;
+  if (!a || !b) { showMessage(window.I18N.t('msg.noImages')); return false; }
+  bookL = bookPage(a, 'left'); bookPlace(bookL, 'left'); spread.appendChild(bookL.el);
+  bookR = bookPage(b, 'right'); bookPlace(bookR, 'right'); spread.appendChild(bookR.el);
+  bookSetCurrent(bookR);
+  void spread.offsetWidth;
+  spread.classList.remove('fade');
+  await sleep(500);
+  return true;
+}
+
+// 翻一頁：l2＝翻過去後的新左頁（葉子背面）、r2＝底下露出的新右頁
+async function bookFlip(l2, r2) {
+  const spread = el('bookSpread');
+  const { pw, ph } = bookGeo;
+  const D = BK.flipMs;
+
+  const nextR = bookPage(r2, 'right');
+  bookPlace(nextR, 'right');
+  spread.insertBefore(nextR.el, spread.firstChild);   // 最底層
+
+  const leaf = document.createElement('div');
+  leaf.className = 'bleaf';
+  Object.assign(leaf.style, { left: pw + 'px', width: pw + 'px', height: ph + 'px', zIndex: '3' });
+  const front = bookR;                                  // 目前右頁搬進葉子當正面
+  front.el.className = 'bpage right';
+  front.el.style.left = '0px';
+  front.el.style.zIndex = '';
+  const back = bookPage(l2, 'left');
+  back.el.classList.add('back');
+  leaf.appendChild(front.el);
+  leaf.appendChild(back.el);
+  spread.appendChild(leaf);
+
+  const ease = 'cubic-bezier(.45,.05,.35,1)';
+  const sh = (node) => node.querySelector('.bshade');
+  const cast = (node) => node.querySelector('.bcast');
+  const anims = [
+    leaf.animate([{ transform: 'rotateY(0deg)' }, { transform: 'rotateY(-180deg)' }], { duration: D, easing: ease, fill: 'forwards' }),
+    // 葉子正面翻起時漸暗、背面落下時由暗轉亮
+    sh(front.el).animate([{ opacity: 0 }, { opacity: 0.45 }], { duration: D / 2, easing: 'ease-in', fill: 'forwards' }),
+    sh(back.el).animate([{ opacity: 0.45 }, { opacity: 0.45, offset: 0.5 }, { opacity: 0 }], { duration: D, easing: 'ease-out', fill: 'forwards' }),
+    // 底下右頁：剛翻起時被葉子投影；左頁：葉子快落下時被投影
+    cast(nextR.el).animate([{ opacity: 0.9 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], { duration: D, easing: 'ease-out', fill: 'forwards' }),
+    cast(bookL.el).animate([{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 0.8, offset: 0.85 }, { opacity: 0 }], { duration: D, easing: 'linear', fill: 'forwards' }),
+  ];
+  await anims[0].finished.catch(() => {});
+  anims.forEach((a) => a.cancel());
+
+  // 葉子背面變成新的左頁；舊左頁與葉子正面釋放
+  bookFree(bookL);
+  back.el.classList.remove('back');
+  bookPlace(back, 'left');
+  spread.appendChild(back.el);
+  bookFree(front);
+  leaf.remove();
+  bookL = back;
+  bookR = nextR;
+  bookSetCurrent(bookR);
+}
+
+async function bookSpotlight() {
+  const p = Math.random() < 0.5 ? bookL : bookR;
+  const full = await loadFull(p.path);
+  if (wallStopped || !full) return;
+  bookSetCurrent(p);
+  wallHeroImg = full;
+  const dims = heroOpen(full, p.canvas, BK.bigScale, 0);
+  await sleep(BK.flyMs);
+  if (wallStopped) return;
+  heroSettled();
+  document.body.classList.add('big');
+  if (BK.breathe) el('heroImg').classList.add('breathe');
+  await sleep(BK.bigMs);
+  document.body.classList.remove('big');
+  if (wallStopped) return;
+  heroClose(p.canvas, dims);
+  await sleep(BK.flyMs);
+  heroHide();
+  wallHeroImg = null;
+}
+
+async function bookLoop() {
+  let flips = 0;
+  const prepare = async () => {
+    const a = await bookThumb();
+    const b = a ? await bookThumb() : null;
+    return [a, b];
+  };
+  let pending = prepare();
+  while (!wallStopped) {
+    if (bookNeedsRebuild) {
+      bookNeedsRebuild = false;
+      const old = await pending;
+      old.forEach((t) => t && freeCanvas(t.canvas));
+      if (!(await bookBuild())) return;
+      pending = prepare();
+    }
+    await sleep(BK.holdMs);
+    if (wallStopped) return;
+    if (BK.bigEvery > 0 && flips > 0 && flips % BK.bigEvery === 0) {
+      await bookSpotlight();
+      if (wallStopped) return;
+      await sleep(300);
+    }
+    const [l2, r2] = await pending;
+    if (wallStopped) return;
+    if (bookNeedsRebuild) { [l2, r2].forEach((t) => t && freeCanvas(t.canvas)); pending = Promise.resolve([null, null]); continue; }
+    pending = prepare();
+    if (l2 && r2) await bookFlip(l2, r2);
+    flips++;
+  }
+}
+
+async function bookStart() {
+  if (images.length === 0) { showMessage(window.I18N.t('msg.noImages')); return; }
+  bookMode = true;
+  wallStopped = false;
+  BK = bookSettings();
+  const r = document.documentElement.style;
+  r.setProperty('--fly-ms', BK.flyMs + 'ms');
+  r.setProperty('--breathe-ms', Math.max(4000, BK.bigMs * 2) + 'ms');
+  document.body.classList.add('book-mode');
+  if (await bookBuild()) bookLoop();
+}
+
 // 視窗大小改變時重建圖牆（欄寬變了，高度要重算）；輪盤則在下一輪開始前重建
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   if (cfMode) { cfNeedsRebuild = true; return; }
+  if (ringMode) { ringNeedsRebuild = true; return; }
+  if (bookMode) { bookNeedsRebuild = true; return; }
   if (collageMode) { ccNeedsRebuild = true; return; }
   if (filmMode) {
     // 放大期間先不動，等收回後的下一次 resize 或下一輪再重建
@@ -2160,5 +2667,7 @@ window.api.onConfig(async (config) => {
   else if (cfg.effect === 'coverflow') cfStart();
   else if (cfg.effect === 'collage') collageStart();
   else if (cfg.effect === 'filmstrip') filmStart();
+  else if (cfg.effect === 'ring') ringStart();
+  else if (cfg.effect === 'book') bookStart();
   else start();
 });

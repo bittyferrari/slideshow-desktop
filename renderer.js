@@ -93,7 +93,14 @@ async function restoreSettings() {
   restoreAspect('filmAspect', s.filmAspect);
   if (typeof s.filmDir === 'string') el('filmDir').value = s.filmDir;
   if (typeof s.filmTone === 'string') el('filmTone').value = s.filmTone;
-  for (const k of ['filmGrain', 'filmShake', 'filmBreathe']) {
+  restoreWallFields(s, RING_FIELDS);
+  if (typeof s.ringShape === 'string') el('ringShape').value = s.ringShape;
+  if (typeof s.ringDir === 'string') el('ringDir').value = s.ringDir;
+  restoreAspect('ringAspect', s.ringAspect);
+  restoreWallFields(s, BOOK_FIELDS);
+  restoreAspect('bookAspect', s.bookAspect);
+  if (typeof s.bookPaper === 'string') el('bookPaper').value = s.bookPaper;
+  for (const k of ['filmGrain', 'filmShake', 'filmBreathe', 'ringBreathe', 'bookBreathe']) {
     if (typeof s[k] === 'boolean') el(k).checked = s[k];
   }
   restoreFx(s);
@@ -143,7 +150,7 @@ const REEL_FIELDS = [
 ];
 
 // 非「一般輪播」的播放模式（存檔時 effect 直接記模式名稱）
-const MODES = ['wall', 'reel', 'polaroid', 'coverflow', 'collage', 'filmstrip'];
+const MODES = ['wall', 'reel', 'polaroid', 'coverflow', 'collage', 'filmstrip', 'ring', 'book'];
 
 // ---- 拍立得散落設定（格式同上）----
 const POLA_FIELDS = [
@@ -197,6 +204,36 @@ const FILM_FIELDS = [
   ['filmFlyMs', 'filmFly', 1000, 1000],
   ['filmBigScale', 'filmBigScale', 100, 1],
   ['filmThumbScale', 'filmThumbScale', 1, 1],
+];
+
+// ---- 3D 旋轉相簿設定（格式同上）----
+const RING_FIELDS = [
+  ['ringCount', 'ringCount', 10, 1],
+  ['ringSize', 'ringSize', 45, 1],
+  ['ringGap', 'ringGap', 30, 1],
+  ['ringTilt', 'ringTilt', 8, 1],
+  ['ringDim', 'ringDim', 30, 1],
+  ['ringMoveMs', 'ringMove', 1400, 1000],
+  ['ringHoldMs', 'ringHold', 2000, 1000],
+  ['ringBigEvery', 'ringBigEvery', 5, 1],
+  ['ringBigMs', 'ringBig', 3000, 1000],
+  ['ringFlyMs', 'ringFly', 1000, 1000],
+  ['ringBigScale', 'ringBigScale', 100, 1],
+  ['ringRadius', 'ringRadius', 10, 1],
+  ['ringThumbScale', 'ringThumbScale', 1, 1],
+];
+
+// ---- 翻頁書設定（格式同上）----
+const BOOK_FIELDS = [
+  ['bookSize', 'bookSize', 80, 1],
+  ['bookPad', 'bookPad', 8, 1],
+  ['bookFlipMs', 'bookFlip', 1400, 1000],
+  ['bookHoldMs', 'bookHold', 3000, 1000],
+  ['bookBigEvery', 'bookBigEvery', 0, 1],
+  ['bookBigMs', 'bookBig', 3000, 1000],
+  ['bookFlyMs', 'bookFly', 1000, 1000],
+  ['bookBigScale', 'bookBigScale', 100, 1],
+  ['bookThumbScale', 'bookThumbScale', 1, 1],
 ];
 
 // 比例下拉選單：找最接近的選項（存的是 1.333 這類小數）
@@ -330,6 +367,8 @@ function toggleEffectOpts() {
   el('cfOpts').classList.toggle('on', mode === 'coverflow');
   el('collageOpts').classList.toggle('on', mode === 'collage');
   el('filmOpts').classList.toggle('on', mode === 'filmstrip');
+  el('ringOpts').classList.toggle('on', mode === 'ring');
+  el('bookOpts').classList.toggle('on', mode === 'book');
   el('normalOpts').classList.toggle('off', mode !== 'normal');
   el('fxOpts').querySelectorAll('.fxPanel').forEach((w) => {
     w.classList.toggle('on', w.dataset.fx === ef);
@@ -413,6 +452,13 @@ el('start').addEventListener('click', async () => {
     filmGrain: el('filmGrain').checked,
     filmShake: el('filmShake').checked,
     filmBreathe: el('filmBreathe').checked,
+    ringShape: el('ringShape').value,
+    ringDir: el('ringDir').value,
+    ringAspect: parseFloat(el('ringAspect').value) || 0.75,
+    ringBreathe: el('ringBreathe').checked,
+    bookAspect: parseFloat(el('bookAspect').value) || 0.75,
+    bookPaper: el('bookPaper').value,
+    bookBreathe: el('bookBreathe').checked,
     fx: collectFx(),
     ...collectWallFields(),
     ...collectWallFields(REEL_FIELDS),
@@ -420,6 +466,8 @@ el('start').addEventListener('click', async () => {
     ...collectWallFields(CF_FIELDS),
     ...collectWallFields(COLLAGE_FIELDS),
     ...collectWallFields(FILM_FIELDS),
+    ...collectWallFields(RING_FIELDS),
+    ...collectWallFields(BOOK_FIELDS),
   };
   // 儲存設定，下次開啟時還原
   await window.api.saveSettings(config);

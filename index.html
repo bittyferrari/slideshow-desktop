@@ -59,6 +59,8 @@
     #polaOpts.on, #cfOpts.on { display: block; }
     #collageOpts, #filmOpts { display: none; margin-top: -6px; }
     #collageOpts.on, #filmOpts.on { display: block; }
+    #ringOpts, #bookOpts { display: none; margin-top: -6px; }
+    #ringOpts.on, #bookOpts.on { display: block; }
     #normalOpts.off { display: none; }
     #fxOpts { margin-top: -6px; }
     .fxPanel { display: none; margin-bottom: 18px; }
@@ -122,6 +124,8 @@
       <option value="coverflow" data-i18n="effect.coverflow">3D 封面流</option>
       <option value="collage" data-i18n="effect.collage">拼貼格</option>
       <option value="filmstrip" data-i18n="effect.filmstrip">電影膠卷</option>
+      <option value="ring" data-i18n="effect.ring">3D 旋轉相簿</option>
+      <option value="book" data-i18n="effect.book">翻頁書</option>
     </select>
   </div>
 
@@ -839,6 +843,227 @@
       </div>
       </div>
       <div class="hint" style="margin-bottom:12px" data-i18n="film.hint"></div>
+    </div>
+  </div>
+
+  <div id="ringOpts">
+    <div class="sub">
+      <div class="title" data-i18n="ring.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="ring.shape"></label>
+        <select id="ringShape">
+          <option value="ring" selected data-i18n="shape.ring"></option>
+          <option value="cube" data-i18n="shape.cube"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.dir"></label>
+        <select id="ringDir">
+          <option value="left" selected data-i18n="dir.left"></option>
+          <option value="right" data-i18n="dir.right"></option>
+          <option value="random" data-i18n="dir.random"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.count"></label>
+        <div class="inline">
+          <input type="number" id="ringCount" min="5" max="24" step="1" value="10" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.size"></label>
+        <div class="inline">
+          <input type="number" id="ringSize" min="15" max="80" step="5" value="45" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.aspect"></label>
+        <select id="ringAspect">
+          <option value="0.75" selected data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+          <option value="1.778" data-i18n="aspect.wide"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.gap"></label>
+        <div class="inline">
+          <input type="number" id="ringGap" min="0" max="200" step="5" value="30" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.tilt"></label>
+        <div class="inline">
+          <input type="number" id="ringTilt" min="-30" max="30" step="1" value="8" />
+          <span data-i18n="unit.deg"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.dim"></label>
+        <div class="inline">
+          <input type="number" id="ringDim" min="0" max="100" step="5" value="30" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.move"></label>
+        <div class="inline">
+          <input type="number" id="ringMove" min="0.1" max="10" step="0.1" value="1.4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.hold"></label>
+        <div class="inline">
+          <input type="number" id="ringHold" min="0" max="120" step="0.5" value="2" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="ringBigEvery" min="0" max="50" step="1" value="5" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.big"></label>
+        <div class="inline">
+          <input type="number" id="ringBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.fly"></label>
+        <div class="inline">
+          <input type="number" id="ringFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="ringBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.radius"></label>
+        <div class="inline">
+          <input type="number" id="ringRadius" min="0" max="60" step="2" value="10" />
+          <span data-i18n="unit.px"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="ring.thumb"></label>
+        <div class="inline">
+          <input type="number" id="ringThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="ringBreathe" checked />
+          <label for="ringBreathe" data-i18n="ring.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="ring.hint"></div>
+    </div>
+  </div>
+
+  <div id="bookOpts">
+    <div class="sub">
+      <div class="title" data-i18n="book.section"></div>
+      <div class="grid2">
+      <div class="field">
+        <label data-i18n="book.size"></label>
+        <div class="inline">
+          <input type="number" id="bookSize" min="30" max="98" step="2" value="80" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.aspect"></label>
+        <select id="bookAspect">
+          <option value="0.75" selected data-i18n="aspect.portrait"></option>
+          <option value="1" data-i18n="aspect.square"></option>
+          <option value="1.333" data-i18n="aspect.landscape"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="book.pad"></label>
+        <div class="inline">
+          <input type="number" id="bookPad" min="0" max="25" step="1" value="8" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.paper"></label>
+        <select id="bookPaper">
+          <option value="cream" selected data-i18n="paper.cream"></option>
+          <option value="white" data-i18n="paper.white"></option>
+          <option value="black" data-i18n="paper.black"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label data-i18n="book.flip"></label>
+        <div class="inline">
+          <input type="number" id="bookFlip" min="0.2" max="10" step="0.1" value="1.4" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.hold"></label>
+        <div class="inline">
+          <input type="number" id="bookHold" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.bigEvery"></label>
+        <div class="inline">
+          <input type="number" id="bookBigEvery" min="0" max="50" step="1" value="0" />
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.big"></label>
+        <div class="inline">
+          <input type="number" id="bookBig" min="0.5" max="120" step="0.5" value="3" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.fly"></label>
+        <div class="inline">
+          <input type="number" id="bookFly" min="0.1" max="10" step="0.1" value="1" />
+          <span data-i18n="unit.seconds"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.bigScale"></label>
+        <div class="inline">
+          <input type="number" id="bookBigScale" min="40" max="100" step="2" value="100" />
+          <span data-i18n="unit.percent"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="book.thumb"></label>
+        <div class="inline">
+          <input type="number" id="bookThumbScale" min="0.4" max="3" step="0.1" value="1" />
+          <span data-i18n="unit.times"></span>
+        </div>
+      </div>
+      <div class="field" style="grid-column: 1 / -1">
+        <div class="check-row">
+          <input type="checkbox" id="bookBreathe" checked />
+          <label for="bookBreathe" data-i18n="book.breathe"></label>
+        </div>
+      </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px" data-i18n="book.hint"></div>
     </div>
   </div>
 

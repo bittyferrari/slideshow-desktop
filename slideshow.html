@@ -350,6 +350,81 @@
     #heroImg.tone-sepia { filter: sepia(0.65) contrast(1.05); }
     #heroImg.tone-bw { filter: grayscale(1) contrast(1.08); }
 
+    /* ==================== 3D 旋轉相簿模式（旋轉木馬／立方體）==================== */
+    /* #ringStage 設 perspective（必須是 #ringRot 的直接父層）；#ringRot 用 preserve-3d，
+       整個環／立方體只改 #ringRot 一個 transform，由 transition 補間。
+       背面變暗用每面自己的黑幕 opacity。 */
+    #ring {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: radial-gradient(ellipse at 50% 40%, #1c2130 0%, #0a0b10 65%, #050507 100%);
+    }
+    body.ring-mode #ring { display: block; }
+    body.ring-mode #stage { display: none; }
+    body.big #ring { visibility: hidden; }
+    #ringStage {
+      position: absolute; inset: 0; transition: opacity 500ms ease;
+      perspective: var(--ring-persp, 1600px); perspective-origin: 50% 50%;
+    }
+    #ringStage.fade { opacity: 0; }
+    #ringRot {
+      position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+      transform-style: preserve-3d;
+      transition: transform var(--ring-move-ms, 1400ms) cubic-bezier(.45,0,.25,1);
+    }
+    .rface { position: absolute; left: 0; top: 0; }
+    #ring.cube .rface { backface-visibility: hidden; }
+    .rface-inner {
+      position: relative; width: 100%; height: 100%; overflow: hidden;
+      border-radius: var(--ring-radius, 10px); background: #111;
+    }
+    .rface-content { position: absolute; inset: 0; }
+    .rface-content canvas { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+    .rface-veil {
+      position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none;
+      transition: opacity var(--ring-move-ms, 1400ms) ease-in-out;
+    }
+
+    /* ==================== 翻頁書模式 ==================== */
+    /* 左右兩頁靜止；翻頁時建立一張「葉子」（正面＝目前右頁、背面＝下一個左頁），
+       以書脊為軸 rotateY(0 → -180deg)。perspective 設在葉子的直接父層 #bookSpread。 */
+    #book {
+      position: fixed; inset: 0; overflow: hidden; display: none;
+      background: radial-gradient(ellipse at 50% 45%, #3b2f25 0%, #241c15 60%, #120e0a 100%);
+    }
+    body.book-mode #book { display: block; }
+    body.book-mode #stage { display: none; }
+    body.big #book { visibility: hidden; }
+    #bookSpread {
+      position: absolute; left: 50%; top: 50%;
+      perspective: var(--book-persp, 2400px); perspective-origin: 50% 50%;
+      transition: opacity 500ms ease;
+    }
+    #bookSpread.fade { opacity: 0; }
+    #bookSpread::before {
+      content: ''; position: absolute; left: 2%; right: 2%; top: 3%; bottom: -3%;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.6); border-radius: 6px;
+    }
+    .bpage {
+      position: absolute; top: 0; overflow: hidden;
+      background: var(--book-paper, #f2ede1);
+    }
+    .bpage.left { border-radius: 6px 0 0 6px; box-shadow: -2px 2px 0 var(--book-edge1, #ddd6c6), -4px 4px 0 var(--book-edge2, #c9c1b0); }
+    .bpage.right { border-radius: 0 6px 6px 0; box-shadow: 2px 2px 0 var(--book-edge1, #ddd6c6), 4px 4px 0 var(--book-edge2, #c9c1b0); }
+    .bpage canvas {
+      position: absolute; display: block; user-select: none; -webkit-user-drag: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    }
+    .bpage .bspine, .bpage .bshade, .bpage .bcast { position: absolute; inset: 0; pointer-events: none; }
+    .bpage.left .bspine { background: linear-gradient(to left, rgba(0,0,0,0.28), rgba(0,0,0,0.08) 6%, transparent 14%); }
+    .bpage.right .bspine { background: linear-gradient(to right, rgba(0,0,0,0.28), rgba(0,0,0,0.08) 6%, transparent 14%); }
+    .bpage .bshade { background: #000; opacity: 0; }
+    .bpage .bcast { opacity: 0; }
+    .bpage.right .bcast { background: linear-gradient(to right, rgba(0,0,0,0.55), rgba(0,0,0,0.1) 60%, transparent); }
+    .bpage.left .bcast { background: linear-gradient(to left, rgba(0,0,0,0.55), rgba(0,0,0,0.1) 60%, transparent); }
+    .bleaf { position: absolute; top: 0; transform-style: preserve-3d; transform-origin: 0 50%; }
+    .bleaf .bpage { left: 0; backface-visibility: hidden; box-shadow: none; }
+    .bleaf .bpage.back { transform: rotateY(180deg); }
+
     /* 圖片資訊面板（移動滑鼠時顯示）*/
     #info {
       position: fixed; left: 24px; bottom: 24px; max-width: 70vw; z-index: 10;
@@ -389,6 +464,8 @@
   <div id="collage"><div id="collageBox"></div></div>
   <div id="film"><div id="filmWrap"><div id="filmTrack"></div></div></div>
   <div id="filmFx"><canvas id="filmGrain"></canvas><div class="vig"></div></div>
+  <div id="ring"><div id="ringStage"><div id="ringRot"></div></div></div>
+  <div id="book"><div id="bookSpread"></div></div>
   <div id="dimVeil"></div>
   <div id="hero"><div id="heroBox"><img id="heroImg" /></div></div>
   <div id="info">
