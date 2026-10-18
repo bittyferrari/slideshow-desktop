@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -7,6 +7,19 @@ const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
 
 let settingsWin = null;
 let slideshowWin = null;
+
+// 播放期間避免螢幕關閉 / 電腦睡眠（'prevent-display-sleep' 同時會阻止系統睡眠）
+let sleepBlockerId = null;
+function preventSleep() {
+  if (sleepBlockerId !== null && powerSaveBlocker.isStarted(sleepBlockerId)) return;
+  sleepBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+}
+function allowSleep() {
+  if (sleepBlockerId !== null && powerSaveBlocker.isStarted(sleepBlockerId)) {
+    powerSaveBlocker.stop(sleepBlockerId);
+  }
+  sleepBlockerId = null;
+}
 
 // 設定檔路徑（存於使用者資料夾，不會被程式更新覆蓋）
 function settingsPath() {
@@ -113,6 +126,7 @@ ipcMain.handle('start-slideshow', async (_evt, config) => {
   });
   slideshowWin.setMenuBarVisibility(false);
   slideshowWin.loadFile('slideshow.html');
+  preventSleep();
 
   // 頁面載入完成後把設定傳過去
   slideshowWin.webContents.once('did-finish-load', () => {
@@ -121,7 +135,10 @@ ipcMain.handle('start-slideshow', async (_evt, config) => {
 
   if (settingsWin) settingsWin.hide();
 
+  const thisWin = slideshowWin;
   slideshowWin.on('closed', () => {
+    if (slideshowWin !== thisWin) return; // 已被新的播放視窗取代
+    allowSleep();
     slideshowWin = null;
     if (settingsWin) settingsWin.show();
   });
