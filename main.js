@@ -137,10 +137,13 @@ ipcMain.handle('start-slideshow', async (_evt, config) => {
 
   const thisWin = slideshowWin;
   slideshowWin.on('closed', () => {
-    if (slideshowWin !== thisWin) return; // 已被新的播放視窗取代
+    if (slideshowWin && slideshowWin !== thisWin) return; // 已被新的播放視窗取代
     allowSleep();
     slideshowWin = null;
-    if (settingsWin) settingsWin.show();
+    if (settingsWin && !settingsWin.isDestroyed()) {
+      settingsWin.show();
+      settingsWin.focus();
+    }
   });
 });
 
@@ -248,9 +251,8 @@ ipcMain.handle('photo-dates', async (_evt, files) => {
 });
 
 // 由播放頁請求退出 slideshow
+// 只負責關閉；slideshowWin 的清除與顯示設定視窗交給 'closed' 事件處理
+// （若在這裡先設成 null，'closed' 裡的「已被取代」判斷會誤判而不顯示設定視窗）
 ipcMain.handle('exit-slideshow', async () => {
-  if (slideshowWin) {
-    slideshowWin.close();
-    slideshowWin = null;
-  }
+  if (slideshowWin && !slideshowWin.isDestroyed()) slideshowWin.close();
 });
