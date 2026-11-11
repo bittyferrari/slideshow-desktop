@@ -490,6 +490,9 @@
     .slide.pair { gap: var(--pair-gap, 16px); }
     .slide.pair img { width: calc(50% - var(--pair-gap, 16px) / 2); }
     .slide.pair .img2 { display: block; }
+    /* 螢幕直放：橫式照片上下兩張 */
+    .slide.pair.pair-v { flex-direction: column; }
+    .slide.pair.pair-v img { width: 100%; height: calc(50% - var(--pair-gap, 16px) / 2); }
 
     /* ==================== 漂浮星空／泡泡模式 ==================== */
     /* 每張縮圖一個 Web Animations 動畫（只動 transform / opacity），交給合成器；

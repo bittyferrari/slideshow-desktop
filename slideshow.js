@@ -164,15 +164,19 @@ async function next() {
     }
     if (!loaded) return;
 
-    // 直式照片兩張並排：這張是直的、螢幕是橫的 → 試著拿下一張；也是直的就並排，否則放回去下次再用
+    // 兩張並排：螢幕是橫的 + 這張是直的 → 左右並排；螢幕是直的（例如 Surface 直放）+ 這張是橫的 → 上下並排。
+    // 試著拿下一張；方向相同就並排，否則放回去下次再用
     const img2 = incoming.querySelector('.img2');
     let paired = false;
-    if (cfg.pairPortrait && window.innerWidth > window.innerHeight && img.naturalHeight > img.naturalWidth * 1.05 && idx < images.length) {
+    const scrLand = window.innerWidth > window.innerHeight;
+    // 橫螢幕配直式照片、直螢幕配橫式照片
+    const fitsPair = (im) => (scrLand ? im.naturalHeight > im.naturalWidth * 1.05 : im.naturalWidth > im.naturalHeight * 1.05);
+    if (cfg.pairPortrait && window.innerWidth !== window.innerHeight && fitsPair(img) && idx < images.length) {
       const p2 = images[idx];
       img2.src = toFileURL(p2);
       try {
         await img2.decode();
-        if (img2.naturalHeight > img2.naturalWidth * 1.05) {
+        if (fitsPair(img2)) {
           paired = true;
           idx++;
           current.path2 = p2;
@@ -184,7 +188,7 @@ async function next() {
     // 效果套在 slide 元素上（而非舞台）：舊圖的 img 動畫在淡出期間才能無縫延續，
     // 不會因規則失效而瞬間跳回原始 transform。
     const ef = pickEffect();
-    incoming.className = 'slide effect-' + ef + (paired ? ' pair' : '');
+    incoming.className = 'slide effect-' + ef + (paired ? (scrLand ? ' pair' : ' pair pair-v') : '');
 
     // 依「這個效果自己的設定」把 CSS 變數寫進 inline style
     applyEffectVars(ef, incoming, outgoing, img);
